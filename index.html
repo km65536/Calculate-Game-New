@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Equation Blocks — 等式パズル</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+
+  <header class="app-header">
+    <div class="brand">
+      <span class="brand-glyph">=</span>
+      <span class="brand-text">EQUATION<br>BLOCKS</span>
+    </div>
+    <div class="header-actions" id="game-header-actions" hidden>
+      <button id="btn-back" class="btn btn-ghost" type="button">← ステージ選択</button>
+      <span class="level-name" id="current-level-name"></span>
+      <div class="spacer"></div>
+      <button id="btn-undo" class="btn" type="button" disabled>ひとつ戻す</button>
+      <button id="btn-reset" class="btn btn-ghost" type="button">最初から</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- ステージ選択画面 -->
+    <section id="screen-select" class="screen">
+      <p class="lead">数字ブロックと記号ブロックを動かして、盤面上の<strong>すべての等式</strong>を成り立たせよう。</p>
+      <div id="level-list" class="level-list">
+        <p class="loading">ステージを読み込み中…</p>
+      </div>
+    </section>
+
+    <!-- ゲーム画面 -->
+    <section id="screen-game" class="screen" hidden>
+      <p class="hint" id="level-hint"></p>
+      <div id="board-wrap">
+        <div id="board" role="grid" aria-label="パズル盤面"></div>
+      </div>
+
+      <div id="clear-overlay" class="clear-overlay" hidden>
+        <div class="clear-card">
+          <p class="clear-eyebrow">SOLVED</p>
+          <p class="clear-title">CLEAR!</p>
+          <div class="clear-actions">
+            <button id="btn-next" class="btn btn-primary" type="button">次のステージへ</button>
+            <button id="btn-replay" class="btn btn-ghost" type="button">もう一度遊ぶ</button>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <p class="footnote">クリックしてブロックを選び、光ったマスをクリックすると移動します。</p>
+</div>
+
+<script src="main.js"></script>
+</body>
+</html>
