@@ -21,6 +21,7 @@
   --accent: #e2a53a;
   --accent-strong: #f2b957;
   --accent-soft: rgba(226, 165, 58, 0.28);
+  --success: #7fd8a4;
 
   /* ブロックの色（ゲームルールで指定された配色） */
   --wall-fill: #0c0c0e;
@@ -256,6 +257,7 @@ main { width: 100%; }
 /* 到達可能マスのハイライト */
 .reachable-cell {
   position: absolute;
+  z-index: 1;
   background: var(--accent-soft);
   border: 1.5px dashed var(--accent);
   border-radius: 6px;
@@ -270,9 +272,26 @@ main { width: 100%; }
   50% { opacity: 1; }
 }
 
+/* 成立した等式を囲む枠 */
+.equation-glow {
+  position: absolute;
+  border-radius: 10px;
+  border: 2px solid var(--success);
+  background: rgba(126, 216, 164, 0.10);
+  box-shadow: 0 0 16px rgba(126, 216, 164, 0.55), inset 0 0 12px rgba(126, 216, 164, 0.25);
+  pointer-events: none;
+  animation: eq-glow-pulse 2s ease-in-out infinite;
+}
+
+@keyframes eq-glow-pulse {
+  0%, 100% { opacity: 0.75; }
+  50% { opacity: 1; }
+}
+
 /* ---------- ブロック共通 ---------- */
 .block {
   position: absolute;
+  z-index: 2;
   display: flex;
   align-items: center;
   justify-content: center;
