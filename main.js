@@ -377,6 +377,7 @@ function cacheEls() {
   els.boardWrap = document.getElementById("board-wrap");
   els.board = document.getElementById("board");
   els.clearOverlay = document.getElementById("clear-overlay");
+  els.clearPreview = document.getElementById("clear-preview");
   els.btnBack = document.getElementById("btn-back");
   els.btnUndo = document.getElementById("btn-undo");
   els.btnReset = document.getElementById("btn-reset");
@@ -681,10 +682,38 @@ async function openLevel(meta, skipOverlay) {
 function showClear() {
   state.cleared.add(state.level.id);
   saveClearedToStorage();
+  renderClearPreview();
   els.clearOverlay.hidden = false;
   const idx = state.levelsMeta.findIndex((m) => m.id === state.level.id);
   const hasNext = idx >= 0 && idx < state.levelsMeta.length - 1;
   els.btnNext.hidden = !hasNext;
+  // 次のステージが無い（最終ステージ）ときは「もう一度遊ぶ」だけが残るので、
+  // 目立たないゴーストボタンのままだと押せるボタンがあることに気づきにくい。
+  // その場合は「もう一度遊ぶ」を主役のボタン見た目に切り替える。
+  els.btnReplay.classList.toggle("btn-primary", !hasNext);
+  els.btnReplay.classList.toggle("btn-ghost", hasNext);
+}
+
+// クリア画面に、完成した盤面のミニプレビューを描画する
+function renderClearPreview() {
+  const container = els.clearPreview;
+  container.innerHTML = "";
+
+  const maxW = 260;
+  const maxH = 170;
+  const size = Math.max(8, Math.min(24, Math.floor(Math.min(maxW / state.width, maxH / state.height))));
+  container.style.setProperty("--cell-size", `${size}px`);
+  container.style.width = `${size * state.width}px`;
+  container.style.height = `${size * state.height}px`;
+
+  const wallEdgeCache = computeWallEdges();
+  for (const block of Object.values(state.blocks)) {
+    const el = renderBlockEl(block, wallEdgeCache);
+    el.classList.remove("selected");
+    // cloneNodeするとクリックイベントリスナーは複製されないため、
+    // 見本表示として安全に（操作できない状態で）使い回せる。
+    container.appendChild(el.cloneNode(true));
+  }
 }
 
 function goToSelect() {

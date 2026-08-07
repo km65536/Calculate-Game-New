@@ -408,12 +408,30 @@ main { width: 100%; }
 }
 
 .clear-title {
-  margin: 6px 0 22px;
+  margin: 6px 0 20px;
   font-family: ui-monospace, "Courier New", monospace;
   font-size: 40px;
   font-weight: 700;
   color: var(--text-bright);
   letter-spacing: 0.04em;
+}
+
+.clear-preview {
+  position: relative;
+  margin: 0 auto 22px;
+  background-color: var(--paper);
+  background-image:
+    linear-gradient(var(--paper-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--paper-line) 1px, transparent 1px);
+  background-size: var(--cell-size) var(--cell-size);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: inset 0 0 0 1px rgba(15, 40, 60, 0.15), 0 10px 22px -12px rgba(0, 0, 0, 0.55);
+}
+/* プレビュー内のブロックはクリックできない見本表示にする */
+.clear-preview .block {
+  cursor: default !important;
+  transition: none;
 }
 
 .clear-actions {
