@@ -24,6 +24,11 @@
       "id": "level5",
       "name": "ステージ5：Make Ten?",
       "file": "data/level5.json"
+    },
+    {
+      "id": "level6",
+      "name": "ステージ5：Make Ten 2",
+      "file": "data/level6.json"
     }
   ]
 }
