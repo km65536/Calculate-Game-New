@@ -90,6 +90,7 @@ async function loadLevel(meta) {
      "+!" のように末尾に "!" を付けると固定（動かせない）記号ブロックになる
      "="  横向きの＝（動かせる）　　"=!" 横向きの＝（固定）
      "|"  縦向きの＝(‖) （動かせる）　"|!" 縦向きの＝（固定）
+     ">" "<" "^" "v"  一方通行ブロック（矢印の向きに進むときだけ通り抜けられる。動かせない）
 
    例（1+2=3 を作るステージ）:
      [
@@ -116,6 +117,11 @@ function parseCellToken(rawToken, x, y) {
   const token = rawToken == null ? "." : String(rawToken).trim();
   if (token === "." || token === "") return null;
   if (token === "#") return { type: "wall", x, y };
+  // 一方通行ブロック：矢印の向きに進むときだけ通り抜けられる（動かせない構造ブロック）
+  if (token === ">") return { type: "oneway", direction: "right", x, y };
+  if (token === "<") return { type: "oneway", direction: "left", x, y };
+  if (token === "^") return { type: "oneway", direction: "up", x, y };
+  if (token === "v" || token === "V") return { type: "oneway", direction: "down", x, y };
 
   let core = token;
   let fixed = false;
@@ -173,9 +179,24 @@ const DIRS = [
   [0, 1],
   [0, -1],
 ];
+const DIR_NAME_BY_DELTA = { "1,0": "right", "-1,0": "left", "0,1": "down", "0,-1": "up" };
+
+// (nx,ny) のマスに、(dx,dy) 方向に進んで入れるかどうかを判定する。
+// 空きマス：常に通れる。一方通行ブロック：矢印と進行方向が一致する時だけ通れる。
+// それ以外（壁・数字・記号ブロック）：常に通れない。
+function isPassable(nx, ny, dx, dy) {
+  const id = state.grid[ny][nx];
+  if (id === null) return true;
+  const b = state.blocks[id];
+  if (b.type === "oneway") {
+    return DIR_NAME_BY_DELTA[`${dx},${dy}`] === b.direction;
+  }
+  return false;
+}
 
 // 指定ブロックが「曲がりながら」到達できる空きマスを幅優先探索で全て求める。
 // 経路上のどのマスも、壁・他ブロック（動かせる／動かせない問わず）で塞がれていたら通れない。
+// ただし一方通行ブロックは、矢印の向きに進む場合に限り通り抜けられる。
 function computeReachable(startX, startY) {
   const visited = new Map(); // "x,y" -> parentKey
   const startKey = `${startX},${startY}`;
@@ -189,7 +210,7 @@ function computeReachable(startX, startY) {
       if (nx < 0 || ny < 0 || nx >= state.width || ny >= state.height) continue;
       const key = `${nx},${ny}`;
       if (visited.has(key)) continue;
-      if (state.grid[ny][nx] !== null) continue; // 何かで塞がっている
+      if (!isPassable(nx, ny, dx, dy)) continue;
       visited.set(key, `${cx},${cy}`);
       queue.push([nx, ny]);
     }
@@ -224,7 +245,7 @@ function getRuns() {
     for (let x = 0; x < state.width; x++) {
       const id = state.grid[y][x];
       const b = id ? state.blocks[id] : null;
-      if (b && b.type !== "wall") {
+      if (b && b.type !== "wall" && b.type !== "oneway") {
         run.push(b);
       } else {
         if (run.length) runs.push({ dir: "h", blocks: run });
@@ -238,7 +259,7 @@ function getRuns() {
     for (let y = 0; y < state.height; y++) {
       const id = state.grid[y][x];
       const b = id ? state.blocks[id] : null;
-      if (b && b.type !== "wall") {
+      if (b && b.type !== "wall" && b.type !== "oneway") {
         run.push(b);
       } else {
         if (run.length) runs.push({ dir: "v", blocks: run });
@@ -383,6 +404,7 @@ function cacheEls() {
   els.btnReset = document.getElementById("btn-reset");
   els.btnNext = document.getElementById("btn-next");
   els.btnReplay = document.getElementById("btn-replay");
+  els.btnClearToSelect = document.getElementById("btn-clear-to-select");
 }
 
 function symbolGlyph(value) {
@@ -482,6 +504,15 @@ function renderBlockEl(block, wallEdgeCache) {
     if (e.r) el.classList.add("edge-r");
     if (e.b) el.classList.add("edge-b");
     if (e.l) el.classList.add("edge-l");
+    return el;
+  }
+
+  if (block.type === "oneway") {
+    el.className = "block block-oneway";
+    const arrow = document.createElement("span");
+    arrow.className = "oneway-arrow";
+    arrow.textContent = { up: "▲", down: "▼", left: "◀", right: "▶" }[block.direction];
+    el.appendChild(arrow);
     return el;
   }
 
@@ -734,6 +765,10 @@ function bindEvents() {
     const next = state.levelsMeta[idx + 1];
     els.clearOverlay.hidden = true;
     if (next) openLevel(next);
+  });
+  els.btnClearToSelect.addEventListener("click", () => {
+    els.clearOverlay.hidden = true;
+    goToSelect();
   });
   els.board.addEventListener("click", () => {
     // 盤面の空白部分をクリックしたら選択解除

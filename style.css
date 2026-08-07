@@ -22,6 +22,7 @@
   --accent-strong: #f2b957;
   --accent-soft: rgba(226, 165, 58, 0.28);
   --success: #7fd8a4;
+  --oneway: #57c7d4;
 
   /* ブロックの色（ゲームルールで指定された配色） */
   --wall-fill: #0c0c0e;
@@ -314,6 +315,19 @@ main { width: 100%; }
 .block-wall {
   background: var(--wall-fill);
   border: 3px solid transparent;
+}
+
+/* 一方通行ブロック：矢印の向きにだけ通り抜けられる */
+.block-oneway {
+  background: #142230;
+  border: 2px solid rgba(87, 199, 212, 0.45);
+  border-radius: 4px;
+}
+.oneway-arrow {
+  color: var(--oneway);
+  font-size: calc(var(--cell-size) * 0.5);
+  line-height: 1;
+  text-shadow: 0 0 8px rgba(87, 199, 212, 0.6);
 }
 .block-wall.edge-t { border-top-color: var(--wall-edge); }
 .block-wall.edge-r { border-right-color: var(--wall-edge); }
