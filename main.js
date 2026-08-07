@@ -389,8 +389,20 @@ function symbolGlyph(value) {
 }
 
 function updateCellSize() {
-  const available = Math.min(els.boardWrap.clientWidth || 640, 640);
-  const size = Math.max(30, Math.min(64, Math.floor(available / state.width)));
+  const wrapWidth = els.boardWrap.clientWidth || window.innerWidth || 640;
+  const availableWidth = Math.max(160, wrapWidth - 4);
+
+  const viewportHeight = window.innerHeight || 800;
+  const boardTop = els.boardWrap.getBoundingClientRect ? els.boardWrap.getBoundingClientRect().top : 160;
+  // ヘッダーやヒント、下の説明文などの分を大まかに差し引いて、
+  // 盤面が縦にもはみ出さない高さを確保する
+  const reservedBelow = 90;
+  const availableHeight = Math.max(160, viewportHeight - boardTop - reservedBelow);
+
+  const sizeByWidth = Math.floor(availableWidth / state.width);
+  const sizeByHeight = Math.floor(availableHeight / state.height);
+  const size = Math.max(24, Math.min(84, sizeByWidth, sizeByHeight));
+
   document.documentElement.style.setProperty("--cell-size", `${size}px`);
 }
 
@@ -521,6 +533,7 @@ function renderHighlights() {
 // 成立している等式を、その式全体を囲む枠としてハイライトする
 function renderEquationGlows() {
   els.board.querySelectorAll(".equation-glow").forEach((n) => n.remove());
+  const PAD = 6; // ブロックの外側にはみ出させる分（px）。これがないと枠がブロックの下に隠れて見えない。
   for (const run of getSatisfiedRuns()) {
     const xs = run.blocks.map((b) => b.x);
     const ys = run.blocks.map((b) => b.y);
@@ -531,10 +544,10 @@ function renderEquationGlows() {
 
     const glow = document.createElement("div");
     glow.className = "equation-glow";
-    glow.style.left = cellPx(minX);
-    glow.style.top = cellPx(minY);
-    glow.style.width = `calc(var(--cell-size) * ${spanX})`;
-    glow.style.height = `calc(var(--cell-size) * ${spanY})`;
+    glow.style.left = `calc(${cellPx(minX)} - ${PAD}px)`;
+    glow.style.top = `calc(${cellPx(minY)} - ${PAD}px)`;
+    glow.style.width = `calc(var(--cell-size) * ${spanX} + ${PAD * 2}px)`;
+    glow.style.height = `calc(var(--cell-size) * ${spanY} + ${PAD * 2}px)`;
     els.board.appendChild(glow);
   }
 }
