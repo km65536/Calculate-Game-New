@@ -1,0 +1,170 @@
+{
+  "id": "level1",
+  "name": "ステージ1：はじめの一歩",
+  "hint": "数字ブロックを動かして「＋」と「＝」の周りに並べ、1+2=3 を完成させよう。",
+  "width": 7,
+  "height": 5,
+  "blocks": [
+    {
+      "id": "w1",
+      "type": "wall",
+      "x": 0,
+      "y": 0
+    },
+    {
+      "id": "w2",
+      "type": "wall",
+      "x": 0,
+      "y": 4
+    },
+    {
+      "id": "w3",
+      "type": "wall",
+      "x": 1,
+      "y": 0
+    },
+    {
+      "id": "w4",
+      "type": "wall",
+      "x": 1,
+      "y": 4
+    },
+    {
+      "id": "w5",
+      "type": "wall",
+      "x": 2,
+      "y": 0
+    },
+    {
+      "id": "w6",
+      "type": "wall",
+      "x": 2,
+      "y": 4
+    },
+    {
+      "id": "w7",
+      "type": "wall",
+      "x": 3,
+      "y": 0
+    },
+    {
+      "id": "w8",
+      "type": "wall",
+      "x": 3,
+      "y": 4
+    },
+    {
+      "id": "w9",
+      "type": "wall",
+      "x": 4,
+      "y": 0
+    },
+    {
+      "id": "w10",
+      "type": "wall",
+      "x": 4,
+      "y": 4
+    },
+    {
+      "id": "w11",
+      "type": "wall",
+      "x": 5,
+      "y": 0
+    },
+    {
+      "id": "w12",
+      "type": "wall",
+      "x": 5,
+      "y": 4
+    },
+    {
+      "id": "w13",
+      "type": "wall",
+      "x": 6,
+      "y": 0
+    },
+    {
+      "id": "w14",
+      "type": "wall",
+      "x": 6,
+      "y": 4
+    },
+    {
+      "id": "w15",
+      "type": "wall",
+      "x": 0,
+      "y": 1
+    },
+    {
+      "id": "w16",
+      "type": "wall",
+      "x": 6,
+      "y": 1
+    },
+    {
+      "id": "w17",
+      "type": "wall",
+      "x": 0,
+      "y": 2
+    },
+    {
+      "id": "w18",
+      "type": "wall",
+      "x": 6,
+      "y": 2
+    },
+    {
+      "id": "w19",
+      "type": "wall",
+      "x": 0,
+      "y": 3
+    },
+    {
+      "id": "w20",
+      "type": "wall",
+      "x": 6,
+      "y": 3
+    },
+    {
+      "id": "s21",
+      "type": "symbol",
+      "value": "+",
+      "movable": false,
+      "x": 2,
+      "y": 2
+    },
+    {
+      "id": "s22",
+      "type": "symbol",
+      "value": "=",
+      "movable": false,
+      "x": 4,
+      "y": 2,
+      "orientation": "horizontal"
+    },
+    {
+      "id": "n23",
+      "type": "number",
+      "value": 3,
+      "movable": true,
+      "x": 1,
+      "y": 1
+    },
+    {
+      "id": "n24",
+      "type": "number",
+      "value": 1,
+      "movable": true,
+      "x": 3,
+      "y": 1
+    },
+    {
+      "id": "n25",
+      "type": "number",
+      "value": 2,
+      "movable": true,
+      "x": 5,
+      "y": 1
+    }
+  ]
+}
