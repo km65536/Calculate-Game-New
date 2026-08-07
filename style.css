@@ -111,11 +111,13 @@ body {
 }
 
 .header-actions {
-  display: flex;
   align-items: center;
   gap: 10px;
   flex: 1;
   flex-wrap: wrap;
+}
+.header-actions:not([hidden]) {
+  display: flex;
 }
 
 .header-actions .spacer { flex: 1; }
@@ -340,11 +342,18 @@ main { width: 100%; }
   position: fixed;
   inset: 0;
   background: rgba(11, 20, 32, 0.82);
+  z-index: 50;
+  animation: fade-in 0.2s ease;
+}
+/* [hidden]属性のときは必ず非表示にする。
+   ここで display:flex を直接 .clear-overlay に書いてしまうと
+   同じ詳細度の [hidden]{display:none} より後勝ちしてしまい、
+   hidden属性があっても常時表示されてしまう（実際に起きたバグ）。
+   :not([hidden]) の場合だけ flex を当てることで回避する。 */
+.clear-overlay:not([hidden]) {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 50;
-  animation: fade-in 0.2s ease;
 }
 
 @keyframes fade-in {
