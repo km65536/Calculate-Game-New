@@ -61,7 +61,8 @@ async function loadLevelsMeta() {
 }
 
 async function loadLevel(meta) {
-  const level = await fetchJSON(meta.file);
+  const def = await fetchJSON(meta.file);
+  const level = levelFromGridDef(def);
   state.level = level;
   state.width = level.width;
   state.height = level.height;
@@ -73,6 +74,89 @@ async function loadLevel(meta) {
   state.selectedId = null;
   state.reachable = new Map();
   state.history = [];
+}
+
+/* ---------- 2次元配列(grid)形式のレベル定義パーサー ----------
+   マップは data/level*.json 内の "grid" プロパティに、
+   行(y) × 列(x) の2次元配列として書く。1マス1トークン。
+
+   トークンの書き方:
+     "."  空きマス
+     "#"  壁ブロック（動かない）
+     "3"  数字ブロック（動かせる。0〜9）
+     "3!" 数字ブロック（動かせない。末尾の "!" が「固定」の意味）
+     "+" "-" "x" "/" "(" ")"   記号ブロック（動かせる）
+       ※ x=× (かける)、/=÷ (わる) のエイリアスとして使える
+     "+!" のように末尾に "!" を付けると固定（動かせない）記号ブロックになる
+     "="  横向きの＝（動かせる）　　"=!" 横向きの＝（固定）
+     "|"  縦向きの＝(‖) （動かせる）　"|!" 縦向きの＝（固定）
+
+   例（1+2=3 を作るステージ）:
+     [
+       ["#","#","#","#","#","#","#"],
+       ["#","3",".","1",".","2","#"],
+       ["#",".","+!",".","=!",".","#"],
+       ["#",".",".",".",".",".","#"],
+       ["#","#","#","#","#","#","#"]
+     ]
+*/
+
+const SYMBOL_TOKEN_ALIASES = {
+  "+": "+",
+  "-": "-",
+  x: "×",
+  "×": "×",
+  "/": "÷",
+  "÷": "÷",
+  "(": "(",
+  ")": ")",
+};
+
+function parseCellToken(rawToken, x, y) {
+  const token = rawToken == null ? "." : String(rawToken).trim();
+  if (token === "." || token === "") return null;
+  if (token === "#") return { type: "wall", x, y };
+
+  let core = token;
+  let fixed = false;
+  if (core.endsWith("!")) {
+    fixed = true;
+    core = core.slice(0, -1);
+  }
+
+  if (/^[0-9]$/.test(core)) {
+    return { type: "number", value: parseInt(core, 10), movable: !fixed, x, y };
+  }
+  if (core === "=") {
+    return { type: "symbol", value: "=", orientation: "horizontal", movable: !fixed, x, y };
+  }
+  if (core === "|" || core === "‖") {
+    return { type: "symbol", value: "=", orientation: "vertical", movable: !fixed, x, y };
+  }
+  if (SYMBOL_TOKEN_ALIASES[core]) {
+    return { type: "symbol", value: SYMBOL_TOKEN_ALIASES[core], movable: !fixed, x, y };
+  }
+  console.warn(`[level "${x},${y}"] unknown token "${rawToken}" — このマスは空きマス扱いにします`);
+  return null;
+}
+
+function levelFromGridDef(def) {
+  const gridDef = def.grid;
+  const height = gridDef.length;
+  const width = gridDef.reduce((max, row) => Math.max(max, row.length), 0);
+  const blocks = [];
+  let counter = 0;
+  for (let y = 0; y < height; y++) {
+    const row = gridDef[y] || [];
+    for (let x = 0; x < width; x++) {
+      const block = parseCellToken(row[x], x, y);
+      if (block) {
+        block.id = `b${++counter}`;
+        blocks.push(block);
+      }
+    }
+  }
+  return { id: def.id, name: def.name, hint: def.hint, width, height, blocks };
 }
 
 /* ---------------- 3. グリッド／到達可能マス探索 ---------------- */
