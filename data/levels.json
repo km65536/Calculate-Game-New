@@ -1,0 +1,19 @@
+{
+  "levels": [
+    {
+      "id": "level1",
+      "name": "ステージ1：はじめの一歩",
+      "file": "data/level1.json"
+    },
+    {
+      "id": "level2",
+      "name": "ステージ2：交わる数式",
+      "file": "data/level2.json"
+    },
+    {
+      "id": "level3",
+      "name": "ステージ3：括弧の力",
+      "file": "data/level3.json"
+    }
+  ]
+}
