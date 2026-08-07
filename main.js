@@ -359,6 +359,11 @@ function checkWin() {
   return checked.every((r) => checkRun(r) === true);
 }
 
+// 現在成立している等式（run）だけを抜き出す。ハイライト表示に使う。
+function getSatisfiedRuns() {
+  return getRuns().filter((r) => runHasOrientedEquals(r) && checkRun(r) === true);
+}
+
 /* ---------------- 5. 描画 ---------------- */
 
 const els = {};
@@ -513,6 +518,27 @@ function renderHighlights() {
   }
 }
 
+// 成立している等式を、その式全体を囲む枠としてハイライトする
+function renderEquationGlows() {
+  els.board.querySelectorAll(".equation-glow").forEach((n) => n.remove());
+  for (const run of getSatisfiedRuns()) {
+    const xs = run.blocks.map((b) => b.x);
+    const ys = run.blocks.map((b) => b.y);
+    const minX = Math.min(...xs);
+    const minY = Math.min(...ys);
+    const spanX = Math.max(...xs) - minX + 1;
+    const spanY = Math.max(...ys) - minY + 1;
+
+    const glow = document.createElement("div");
+    glow.className = "equation-glow";
+    glow.style.left = cellPx(minX);
+    glow.style.top = cellPx(minY);
+    glow.style.width = `calc(var(--cell-size) * ${spanX})`;
+    glow.style.height = `calc(var(--cell-size) * ${spanY})`;
+    els.board.appendChild(glow);
+  }
+}
+
 function refreshSelectedVisual() {
   els.board.querySelectorAll(".block").forEach((n) => n.classList.remove("selected"));
   if (state.selectedId) {
@@ -569,6 +595,7 @@ function onReachableCellClick(x, y) {
 
   deselect();
   animateAlongPath(blockId, path).then(() => {
+    renderEquationGlows();
     if (checkWin()) showClear();
   });
 }
@@ -608,6 +635,7 @@ async function undo() {
   const forwardFull = [move.from, ...move.path];
   const backwardPath = [...forwardFull].reverse().slice(1);
   await animateAlongPath(move.blockId, backwardPath);
+  renderEquationGlows();
 }
 
 function resetLevel() {
@@ -634,6 +662,7 @@ async function openLevel(meta, skipOverlay) {
   showScreen("game");
   renderBoard();
   renderHighlights();
+  renderEquationGlows();
 }
 
 function showClear() {
