@@ -14,6 +14,11 @@
       "id": "level3",
       "name": "ステージ3：括弧の力",
       "file": "data/level3.json"
+    },
+    {
+      "id": "level4",
+      "name": "ステージ4：Make Ten",
+      "file": "data/level4.json"
     }
   ]
 }
