@@ -1,0 +1,393 @@
+/* =========================================================
+   Equation Blocks — スタイルシート
+   コンセプト：設計図(ブループリント)のグラフ用紙の上で、
+   数式を組み立てていくイメージ。
+   ========================================================= */
+
+:root {
+  /* ベースパレット */
+  --ink-950: #0b1420;
+  --ink-900: #101d30;
+  --ink-800: #182a44;
+  --ink-700: #22385a;
+  --line-soft: rgba(154, 190, 224, 0.14);
+  --line-softer: rgba(154, 190, 224, 0.07);
+  --paper: #eef4f6;
+  --paper-line: rgba(15, 40, 60, 0.08);
+
+  --text-bright: #eef6fb;
+  --text-dim: #9fb4c9;
+
+  --accent: #e2a53a;
+  --accent-strong: #f2b957;
+  --accent-soft: rgba(226, 165, 58, 0.28);
+
+  /* ブロックの色（ゲームルールで指定された配色） */
+  --wall-fill: #0c0c0e;
+  --wall-edge: #d1453d;
+  --number-fill: #bfe6f5;
+  --number-text: #0c2c3d;
+  --symbol-fill: #fbe9a0;
+  --symbol-text: #40340a;
+  --fixed-edge: #d1453d;
+
+  --cell-size: 56px;
+  --radius: 10px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100%;
+  background:
+    radial-gradient(circle at 15% -10%, #1c3455 0%, transparent 45%),
+    radial-gradient(circle at 100% 0%, #16283f 0%, transparent 40%),
+    var(--ink-950);
+  color: var(--text-bright);
+  font-family: -apple-system, BlinkMacSystemFont, "Hiragino Kaku Gothic ProN",
+    "Hiragino Sans", "Yu Gothic UI", "Segoe UI", "Noto Sans JP", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+}
+
+#app {
+  width: 100%;
+  max-width: 960px;
+  padding: 20px 16px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+/* ---------- ヘッダー ---------- */
+.app-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.brand-glyph {
+  font-family: "Courier New", ui-monospace, monospace;
+  font-weight: 700;
+  font-size: 30px;
+  color: var(--ink-950);
+  background: var(--accent);
+  width: 42px;
+  height: 42px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 0 rgba(0,0,0,0.35);
+}
+
+.brand-text {
+  font-family: ui-monospace, "SFMono-Regular", "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.25;
+  letter-spacing: 0.14em;
+  color: var(--text-dim);
+  font-weight: 700;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  flex-wrap: wrap;
+}
+
+.header-actions .spacer { flex: 1; }
+
+.level-name {
+  font-size: 14px;
+  color: var(--text-dim);
+  letter-spacing: 0.02em;
+}
+
+/* ---------- ボタン ---------- */
+.btn {
+  appearance: none;
+  border: 1px solid var(--line-soft);
+  background: var(--ink-800);
+  color: var(--text-bright);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 9px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: transform 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+  font-family: inherit;
+}
+.btn:hover:not(:disabled) { background: var(--ink-700); border-color: var(--accent-soft); }
+.btn:active:not(:disabled) { transform: translateY(1px); }
+.btn:disabled { opacity: 0.4; cursor: default; }
+
+.btn-ghost {
+  background: transparent;
+}
+
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #29200a;
+}
+.btn-primary:hover { background: var(--accent-strong); }
+
+/* ---------- 画面共通 ---------- */
+main { width: 100%; }
+.screen { width: 100%; }
+
+.lead {
+  color: var(--text-dim);
+  font-size: 15px;
+  line-height: 1.7;
+  max-width: 640px;
+  margin: 4px 0 20px;
+}
+
+.hint {
+  color: var(--text-dim);
+  font-size: 13.5px;
+  line-height: 1.6;
+  margin: 0 0 14px;
+  padding: 10px 14px;
+  border-left: 3px solid var(--accent);
+  background: var(--line-softer);
+  border-radius: 0 8px 8px 0;
+}
+
+.footnote {
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 12px;
+  margin: 6px 0 0;
+  opacity: 0.75;
+}
+
+/* ---------- ステージ選択 ---------- */
+.level-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.loading { color: var(--text-dim); font-size: 13px; }
+
+.level-card {
+  text-align: left;
+  border: 1px solid var(--line-soft);
+  background: linear-gradient(180deg, var(--ink-800), var(--ink-900));
+  border-radius: 12px;
+  padding: 18px;
+  cursor: pointer;
+  color: var(--text-bright);
+  font-family: inherit;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.level-card:hover {
+  border-color: var(--accent-soft);
+  transform: translateY(-2px);
+  box-shadow: 0 10px 24px -12px rgba(0,0,0,0.6);
+}
+.level-card .num {
+  font-family: ui-monospace, "Courier New", monospace;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  color: var(--accent);
+}
+.level-card .name { font-size: 16px; font-weight: 700; }
+.level-card .desc { font-size: 12.5px; color: var(--text-dim); line-height: 1.5; }
+.level-card .status {
+  margin-top: 6px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: #7fd8a4;
+  font-weight: 700;
+}
+
+/* ---------- 盤面 ---------- */
+#board-wrap {
+  width: 100%;
+  overflow: auto;
+  display: flex;
+  justify-content: center;
+  padding: 10px 0 6px;
+}
+
+#board {
+  position: relative;
+  background-color: var(--paper);
+  background-image:
+    linear-gradient(var(--paper-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--paper-line) 1px, transparent 1px);
+  background-size: var(--cell-size) var(--cell-size);
+  border-radius: var(--radius);
+  box-shadow: 0 20px 50px -20px rgba(0,0,0,0.65), inset 0 0 0 1px rgba(15,40,60,0.15);
+  flex-shrink: 0;
+}
+
+/* 到達可能マスのハイライト */
+.reachable-cell {
+  position: absolute;
+  background: var(--accent-soft);
+  border: 1.5px dashed var(--accent);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.12s ease;
+  animation: pulse-glow 1.6s ease-in-out infinite;
+}
+.reachable-cell:hover { background: rgba(226, 165, 58, 0.45); }
+
+@keyframes pulse-glow {
+  0%, 100% { opacity: 0.65; }
+  50% { opacity: 1; }
+}
+
+/* ---------- ブロック共通 ---------- */
+.block {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  user-select: none;
+  box-sizing: border-box;
+  transition: left 0.14s linear, top 0.14s linear, box-shadow 0.15s ease;
+}
+
+.block-wall {
+  background: var(--wall-fill);
+  border: 3px solid transparent;
+}
+.block-wall.edge-t { border-top-color: var(--wall-edge); }
+.block-wall.edge-r { border-right-color: var(--wall-edge); }
+.block-wall.edge-b { border-bottom-color: var(--wall-edge); }
+.block-wall.edge-l { border-left-color: var(--wall-edge); }
+
+.block-number,
+.block-symbol {
+  border-radius: 6px;
+  font-family: ui-monospace, "SFMono-Regular", "Courier New", monospace;
+  font-size: calc(var(--cell-size) * 0.46);
+}
+
+.block-number {
+  background: var(--number-fill);
+  color: var(--number-text);
+  box-shadow: inset 0 -3px 0 rgba(12, 44, 61, 0.18);
+}
+
+.block-symbol {
+  background: var(--symbol-fill);
+  color: var(--symbol-text);
+  box-shadow: inset 0 -3px 0 rgba(64, 52, 10, 0.18);
+}
+
+.block-number.fixed,
+.block-symbol.fixed {
+  border: 3px solid var(--fixed-edge);
+}
+
+.block-number.movable,
+.block-symbol.movable {
+  cursor: pointer;
+}
+.block-number.movable:hover,
+.block-symbol.movable:hover {
+  filter: brightness(1.05);
+}
+
+.block.selected {
+  box-shadow: 0 0 0 3px var(--accent), 0 0 0 3px var(--accent), 0 6px 18px -4px rgba(226,165,58,0.6);
+  z-index: 5;
+}
+
+.symbol-glyph {
+  display: block;
+  line-height: 1;
+}
+.symbol-glyph.rotate {
+  transform: rotate(90deg);
+}
+
+/* ---------- クリア演出 ---------- */
+.clear-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(11, 20, 32, 0.82);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+  animation: fade-in 0.2s ease;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.clear-card {
+  background: linear-gradient(180deg, var(--ink-800), var(--ink-900));
+  border: 1px solid var(--accent-soft);
+  border-radius: 16px;
+  padding: 36px 44px;
+  text-align: center;
+  box-shadow: 0 30px 60px -20px rgba(0,0,0,0.7);
+}
+
+.clear-eyebrow {
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 0.3em;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.clear-title {
+  margin: 6px 0 22px;
+  font-family: ui-monospace, "Courier New", monospace;
+  font-size: 40px;
+  font-weight: 700;
+  color: var(--text-bright);
+  letter-spacing: 0.04em;
+}
+
+.clear-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+/* ---------- レスポンシブ ---------- */
+@media (max-width: 560px) {
+  .brand-text { font-size: 11px; }
+  .clear-card { padding: 28px 24px; }
+  .clear-title { font-size: 32px; }
+}
