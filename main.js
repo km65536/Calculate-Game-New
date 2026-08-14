@@ -376,9 +376,11 @@ function tokenizeRun(run) {
   return tokens;
 }
 
-// varValues: { 変数名: 数値 } 。省略した場合は変数を一切解決できないものとして評価する。
-function evalExpr(tokens, varValues) {
+// varValues: { 変数名: 数値 } 。funcs: { 関数名: {paramName, rhs(トークン列)} } 。
+// どちらも省略した場合は、変数・関数を一切解決できないものとして評価する。
+function evalExpr(tokens, varValues, funcs) {
   const vars = varValues || {};
+  const fns = funcs || {};
   let pos = 0;
   const peek = () => tokens[pos];
   const next = () => tokens[pos++];
@@ -415,6 +417,16 @@ function evalExpr(tokens, varValues) {
     }
     if (tk.t === "var") {
       next();
+      // 文字の直後に "(" が続く場合は、変数参照ではなく「関数呼び出し」として扱う
+      if (peek() && peek().t === "lparen") {
+        next(); // '(' を消費
+        const argValue = parseExpr();
+        const c = next();
+        if (!c || c.t !== "rparen") throw new Error("expected ) after function argument");
+        const fn = fns[tk.name];
+        if (!fn) throw new Error(`unresolved function ${tk.name}`);
+        return evalExpr(fn.rhs, { ...vars, [fn.paramName]: argValue }, fns);
+      }
       if (!Object.prototype.hasOwnProperty.call(vars, tk.name)) {
         throw new Error(`unresolved variable ${tk.name}`);
       }
@@ -436,7 +448,7 @@ function evalExpr(tokens, varValues) {
   return result;
 }
 
-function checkRun(run, varValues) {
+function checkRun(run, varValues, funcs) {
   const tokens = tokenizeRun(run);
   const segments = [[]];
   for (const tk of tokens) {
@@ -445,7 +457,7 @@ function checkRun(run, varValues) {
   }
   if (segments.length < 2) return false;
   try {
-    const values = segments.map((seg) => evalExpr(seg, varValues));
+    const values = segments.map((seg) => evalExpr(seg, varValues, funcs));
     const eps = 1e-9;
     for (let i = 1; i < values.length; i++) {
       if (Math.abs(values[i] - values[0]) > eps) return false;
@@ -456,93 +468,251 @@ function checkRun(run, varValues) {
   }
 }
 
-// runが「代入として成立する形」かどうかを判定する:
-//   左辺に文字ブロックがちょうど1つ、間に:=、右辺に何らかの式があること
-function assignmentShape(run) {
+// runが「代入 or 関数定義として成立する形」かどうかを判定する。
+//   変数代入: [変数] := [右辺の式]                          例: x := 5
+//   関数定義: [関数名] ( [入力変数] ) := [右辺の式]           例: f(x) := x+2
+// どちらの形にも当てはまらなければ null を返す（右辺に=や:=が混ざる場合も不正として null）。
+function classifyAssignmentShape(run) {
   const tokens = tokenizeRun(run);
-  const assignIdx = tokens.findIndex((t) => t.t === "assign");
-  if (assignIdx !== 1) return null; // 左辺が「変数1つだけ」でない（:=の位置が1番目でない）
-  if (tokens[0].t !== "var") return null;
-  const rhs = tokens.slice(assignIdx + 1);
-  if (rhs.length === 0) return null;
-  if (rhs.some((t) => t.t === "assign" || t.t === "eq")) return null; // 右辺に=や:=が混ざるのは不正
-  return { varName: tokens[0].name, rhs };
+
+  // 関数定義の形： var lparen var rparen assign ...rhs
+  if (
+    tokens.length >= 6 &&
+    tokens[0].t === "var" &&
+    tokens[1].t === "lparen" &&
+    tokens[2].t === "var" &&
+    tokens[3].t === "rparen" &&
+    tokens[4].t === "assign"
+  ) {
+    const rhs = tokens.slice(5);
+    if (rhs.length > 0 && !rhs.some((t) => t.t === "assign" || t.t === "eq")) {
+      return { kind: "function", funcName: tokens[0].name, paramName: tokens[2].name, rhs };
+    }
+    return null;
+  }
+
+  // 変数代入の形： var assign ...rhs
+  if (tokens.length >= 2 && tokens[0].t === "var" && tokens[1].t === "assign") {
+    const rhs = tokens.slice(2);
+    if (rhs.length > 0 && !rhs.some((t) => t.t === "assign" || t.t === "eq")) {
+      return { kind: "variable", varName: tokens[0].name, rhs };
+    }
+    return null;
+  }
+
+  return null;
+}
+
+// 後方互換用（variable_test.js等の既存テストが直接参照している）
+function assignmentShape(run) {
+  const shape = classifyAssignmentShape(run);
+  return shape && shape.kind === "variable" ? { varName: shape.varName, rhs: shape.rhs } : null;
 }
 
 // 盤面上の全ての代入（:=）候補を集め、固定点反復で変数の値を確定させる。
 // 例: x:=1, y:=x+1 のような依存関係も、収束するまで繰り返し評価することで解決する。
 function resolveVariables() {
-  const candidates = getRuns()
-    .filter(runHasAssignment)
-    .map((run) => ({ run, shape: assignmentShape(run) }))
-    .filter((c) => c.shape !== null);
-
-  // 同じ変数名に対する代入が2つ以上あれば「代入が失敗している」とみなし、
-  // それらは値の確定に一切使わない（＝コンフリクト扱い）。
-  const nameCounts = new Map();
-  for (const c of candidates) {
-    nameCounts.set(c.shape.varName, (nameCounts.get(c.shape.varName) || 0) + 1);
+  const assignRuns = getRuns().filter(runHasAssignment);
+  const varCandidates = [];
+  const funcCandidates = [];
+  for (const run of assignRuns) {
+    const shape = classifyAssignmentShape(run);
+    if (!shape) continue;
+    if (shape.kind === "function") funcCandidates.push({ run, shape });
+    else varCandidates.push({ run, shape });
   }
-  const conflictedNames = new Set([...nameCounts.entries()].filter(([, n]) => n > 1).map(([name]) => name));
-  const conflictedRunIds = new Set(candidates.filter((c) => conflictedNames.has(c.shape.varName)).map((c) => c.run));
 
-  const resolvable = candidates.filter((c) => !conflictedNames.has(c.shape.varName));
+  // 同じ名前に対する代入・定義が2つ以上あれば「失敗している」とみなし、値の確定には使わない。
+  const nameCounts = new Map();
+  for (const c of varCandidates) nameCounts.set(c.shape.varName, (nameCounts.get(c.shape.varName) || 0) + 1);
+  const conflictedNames = new Set([...nameCounts.entries()].filter(([, n]) => n > 1).map(([name]) => name));
+
+  const funcNameCounts = new Map();
+  for (const c of funcCandidates) funcNameCounts.set(c.shape.funcName, (funcNameCounts.get(c.shape.funcName) || 0) + 1);
+  const conflictedFuncNames = new Set([...funcNameCounts.entries()].filter(([, n]) => n > 1).map(([name]) => name));
 
   const varValues = {};
+  const funcs = {}; // 関数名 -> { paramName, rhs(トークン列) }
+
+  // 変数と関数は互いに参照し合えるので（関数の中で他の変数・関数を使う、変数の右辺で関数を呼ぶ等）、
+  // 両方をまとめて固定点反復で解決する。
   let changed = true;
   while (changed) {
     changed = false;
-    for (const c of resolvable) {
+    for (const c of varCandidates) {
+      if (conflictedNames.has(c.shape.varName)) continue;
       if (Object.prototype.hasOwnProperty.call(varValues, c.shape.varName)) continue;
       try {
-        const val = evalExpr(c.shape.rhs, varValues);
-        varValues[c.shape.varName] = val;
+        varValues[c.shape.varName] = evalExpr(c.shape.rhs, varValues, funcs);
         changed = true;
       } catch (e) {
-        // まだ解決できない（未確定の変数を参照している等）。次の周回で再挑戦する。
+        // まだ解決できない。次の周回で再挑戦する。
+      }
+    }
+    for (const c of funcCandidates) {
+      if (conflictedFuncNames.has(c.shape.funcName)) continue;
+      if (Object.prototype.hasOwnProperty.call(funcs, c.shape.funcName)) continue;
+      // 入力変数は「未定義」である必要がある（すでに他の場所で変数として値が決まっていてはいけない）
+      if (Object.prototype.hasOwnProperty.call(varValues, c.shape.paramName)) continue;
+      try {
+        // 右辺が構造的に評価できるか、入力変数にダミー値(1)を入れて検証する。
+        // 実際の計算結果はここでは使わない（関数は呼び出し時に毎回、実際の引数で評価し直す）。
+        evalExpr(c.shape.rhs, { ...varValues, [c.shape.paramName]: 1 }, funcs);
+        funcs[c.shape.funcName] = { paramName: c.shape.paramName, rhs: c.shape.rhs };
+        changed = true;
+      } catch (e) {
+        // まだ解決できない。次の周回で再挑戦する。
       }
     }
   }
 
-  // 最終的な varValues を使って、各候補（コンフリクトしていないもの）が
-  // 「今、成立しているか」を個別に判定する
-  const satisfiedRunIds = new Set();
-  for (const c of resolvable) {
-    try {
-      evalExpr(c.shape.rhs, varValues);
-      satisfiedRunIds.add(c.run);
-    } catch (e) {
-      // 未成立。何もしない。
-    }
+  const satisfiedVarRunIds = new Set();
+  for (const c of varCandidates) {
+    if (conflictedNames.has(c.shape.varName)) continue;
+    if (Object.prototype.hasOwnProperty.call(varValues, c.shape.varName)) satisfiedVarRunIds.add(c.run);
+  }
+  const satisfiedFuncRunIds = new Set();
+  for (const c of funcCandidates) {
+    if (conflictedFuncNames.has(c.shape.funcName)) continue;
+    if (Object.prototype.hasOwnProperty.call(funcs, c.shape.funcName)) satisfiedFuncRunIds.add(c.run);
   }
 
-  return { varValues, candidates, satisfiedRunIds, conflictedRunIds };
+  return {
+    varValues,
+    funcs,
+    varCandidates,
+    funcCandidates,
+    satisfiedVarRunIds,
+    satisfiedFuncRunIds,
+    nameCounts,
+    funcNameCounts,
+    // 後方互換（既存テストや呼び出し元向け）
+    candidates: varCandidates,
+    satisfiedRunIds: satisfiedVarRunIds,
+  };
 }
 
 function checkWin() {
-  const { varValues } = resolveVariables();
+  const { varValues, funcs } = resolveVariables();
   const runs = getRuns();
   const checked = runs.filter(runHasOrientedEquals);
   if (checked.length === 0) return false;
-  return checked.every((r) => checkRun(r, varValues) === true);
+  return checked.every((r) => checkRun(r, varValues, funcs) === true);
 }
 
 // 現在成立している等式（run）だけを抜き出す。ハイライト表示に使う。
 function getSatisfiedRuns() {
-  const { varValues } = resolveVariables();
-  return getRuns().filter((r) => runHasOrientedEquals(r) && checkRun(r, varValues) === true);
+  const { varValues, funcs } = resolveVariables();
+  return getRuns().filter((r) => runHasOrientedEquals(r) && checkRun(r, varValues, funcs) === true);
 }
 
-// 現在成立している代入（run）だけを抜き出す。ハイライト表示に使う。
+// 現在成立している代入・関数定義（run）だけを抜き出す。ハイライト表示（紫の枠）に使う。
 function getSatisfiedAssignmentRuns() {
-  const { candidates, satisfiedRunIds } = resolveVariables();
-  return candidates.filter((c) => satisfiedRunIds.has(c.run)).map((c) => c.run);
+  const { varCandidates, satisfiedVarRunIds, funcCandidates, satisfiedFuncRunIds } = resolveVariables();
+  const varRuns = varCandidates.filter((c) => satisfiedVarRunIds.has(c.run)).map((c) => c.run);
+  const funcRuns = funcCandidates.filter((c) => satisfiedFuncRunIds.has(c.run)).map((c) => c.run);
+  return [...varRuns, ...funcRuns];
 }
 
-// 同じ変数に複数の代入が存在して失敗している（コンフリクトしている）runを抜き出す。×印の表示に使う。
-function getConflictedAssignmentRuns() {
-  const { candidates, conflictedRunIds } = resolveVariables();
-  return candidates.filter((c) => conflictedRunIds.has(c.run)).map((c) => c.run);
+// 「代入・関数定義として完成しているのに成立していない」runを全部抜き出す（×印の表示に使う）。
+// 同じ名前への重複だけでなく、右辺に未解決の変数・関数がある場合、
+// 関数の入力変数がすでに変数として使われている場合なども、ここに含まれる。
+function getFailedAssignmentRuns() {
+  const { varCandidates, satisfiedVarRunIds, funcCandidates, satisfiedFuncRunIds } = resolveVariables();
+  const varRuns = varCandidates.filter((c) => !satisfiedVarRunIds.has(c.run)).map((c) => c.run);
+  const funcRuns = funcCandidates.filter((c) => !satisfiedFuncRunIds.has(c.run)).map((c) => c.run);
+  return [...varRuns, ...funcRuns];
+}
+
+// runの中で使われている var トークンを、「関数呼び出しの一部（直後に(が続く）」か
+// 「普通の変数参照」かに分けて、未解決なものを抜き出す。boundName は関数定義の入力変数など、
+// このrunの中では束縛済みとして扱ってよい名前（無ければ null）。
+function findUnresolvedRefs(tokens, varValues, funcs, boundName) {
+  const missingVars = new Set();
+  const missingFuncs = new Set();
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i];
+    if (t.t !== "var") continue;
+    const isCall = tokens[i + 1] && tokens[i + 1].t === "lparen";
+    if (isCall) {
+      if (!Object.prototype.hasOwnProperty.call(funcs, t.name)) missingFuncs.add(t.name);
+    } else {
+      if (t.name === boundName) continue;
+      if (!Object.prototype.hasOwnProperty.call(varValues, t.name)) missingVars.add(t.name);
+    }
+  }
+  return { missingVars: [...missingVars], missingFuncs: [...missingFuncs] };
+}
+
+// 文字ブロック（変数）1つについて、今の状態を説明する情報を返す。
+// { defined:true, value } か、{ defined:false, reason } のどちらか。
+// ツールチップ（ホバー表示）で使う。
+function explainVariableStatus(name) {
+  const { varValues, funcs, candidates, nameCounts } = resolveVariables();
+  if (Object.prototype.hasOwnProperty.call(varValues, name)) {
+    return { defined: true, value: varValues[name] };
+  }
+  const count = nameCounts.get(name) || 0;
+  if (count === 0) {
+    return { defined: false, reason: "代入されていません" };
+  }
+  if (count > 1) {
+    return { defined: false, reason: `この文字への代入が${count}個あります（1つにしてください）` };
+  }
+  const cand = candidates.find((c) => c.shape.varName === name);
+  if (!cand) return { defined: false, reason: "右辺の式が計算できません" };
+  const { missingVars, missingFuncs } = findUnresolvedRefs(cand.shape.rhs, varValues, funcs, null);
+  if (missingVars.length > 0) {
+    return { defined: false, reason: `右辺の「${missingVars.join("」「")}」が未解決です` };
+  }
+  if (missingFuncs.length > 0) {
+    return { defined: false, reason: `右辺の関数「${missingFuncs.join("」「")}」が未定義です` };
+  }
+  return { defined: false, reason: "右辺の式が計算できません" };
+}
+
+// 失敗している代入・関数定義(run)そのものについて、「なぜ成立していないか」を説明する文を返す。
+// explainVariableStatusと似ているが、こちらは変数名ではなく式(run)そのものに紐づく。
+function explainFailureForCandidate(cand, varValues, funcs, nameCounts, funcNameCounts) {
+  if (cand.shape.kind === "function") {
+    const name = cand.shape.funcName;
+    const count = funcNameCounts.get(name) || 0;
+    if (count > 1) {
+      return `関数「${name}」の定義が${count}個あります（1つにしてください）`;
+    }
+    if (Object.prototype.hasOwnProperty.call(varValues, cand.shape.paramName)) {
+      return `入力変数「${cand.shape.paramName}」はすでに変数として使われています（別の文字にしてください）`;
+    }
+    const { missingVars, missingFuncs } = findUnresolvedRefs(cand.shape.rhs, varValues, funcs, cand.shape.paramName);
+    if (missingVars.length > 0) {
+      return `右辺の「${missingVars.join("」「")}」が未解決です`;
+    }
+    if (missingFuncs.length > 0) {
+      return `右辺の関数「${missingFuncs.join("」「")}」が未定義です`;
+    }
+    return "右辺の式が計算できません";
+  }
+
+  const name = cand.shape.varName;
+  const count = nameCounts.get(name) || 0;
+  if (count > 1) {
+    return `「${name}」への代入が${count}個あります（1つにしてください）`;
+  }
+  const { missingVars, missingFuncs } = findUnresolvedRefs(cand.shape.rhs, varValues, funcs, null);
+  if (missingVars.length > 0) {
+    return `右辺の「${missingVars.join("」「")}」が未解決です`;
+  }
+  if (missingFuncs.length > 0) {
+    return `右辺の関数「${missingFuncs.join("」「")}」が未定義です`;
+  }
+  return "右辺の式が計算できません";
+}
+
+function explainAssignmentFailure(run) {
+  const { varValues, funcs, varCandidates, funcCandidates, nameCounts, funcNameCounts } = resolveVariables();
+  const cand = [...varCandidates, ...funcCandidates].find((c) => c.run === run);
+  if (!cand) return "この式はまだ成立していません";
+  return explainFailureForCandidate(cand, varValues, funcs, nameCounts, funcNameCounts);
 }
 
 /* ---------------- 5. 描画 ---------------- */
@@ -754,7 +924,98 @@ function renderBlockEl(block) {
   return el;
 }
 
-/* ---- 文字ブロック（変数）の値ツールチップ：ホバー／長押しで x=6 のように表示する ---- */
+/* ---- 文字ブロックの役割判定：変数参照／関数定義の名前／関数呼び出しの名前 ---- */
+
+// tokens内で、numberブロックの連結を考慮しつつ、targetBlockに対応するトークンの
+// インデックスを返す（targetBlockは必ずletter/symbolブロックである前提）。
+function tokenIndexOfBlock(runBlocks, targetBlock) {
+  let idx = 0;
+  let inNumberRun = false;
+  for (const b of runBlocks) {
+    if (b.type === "number") {
+      inNumberRun = true;
+      continue;
+    }
+    if (inNumberRun) {
+      idx++;
+      inNumberRun = false;
+    }
+    if (b === targetBlock) return idx;
+    idx++;
+  }
+  return -1;
+}
+
+// 対応する閉じ括弧のトークンインデックスを返す（openIdxは開き括弧自身の位置）
+function matchingRParenIndex(tokens, openIdx) {
+  let depth = 0;
+  for (let i = openIdx; i < tokens.length; i++) {
+    if (tokens[i].t === "lparen") depth++;
+    else if (tokens[i].t === "rparen") {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
+// 文字ブロック1つについて、盤面上での「役割」を判定する。
+//   { role: "variable" }
+//   { role: "functionDef", funcName, paramName, rhs }
+//   { role: "functionCall", funcName, argTokens }
+// 横・縦どちらのrunにも属しうるので両方調べ、関数としての役割が見つかればそちらを優先する。
+function classifyLetterOccurrence(block) {
+  const runs = getRuns();
+  let variableFallback = null;
+  for (const run of runs) {
+    if (!run.blocks.includes(block)) continue;
+    const tokens = tokenizeRun(run);
+    const idx = tokenIndexOfBlock(run.blocks, block);
+    if (idx === -1 || tokens[idx].t !== "var") continue;
+
+    const followedByCall = tokens[idx + 1] && tokens[idx + 1].t === "lparen";
+    if (!followedByCall) {
+      variableFallback = variableFallback || { role: "variable" };
+      continue;
+    }
+
+    // 関数定義そのものかどうか： var(0) lparen var(2) rparen assign ... が、
+    // ちょうどこのトークン位置(idx=0)から始まっている場合
+    if (
+      idx === 0 &&
+      tokens.length >= 5 &&
+      tokens[1].t === "lparen" &&
+      tokens[2].t === "var" &&
+      tokens[3].t === "rparen" &&
+      tokens[4].t === "assign"
+    ) {
+      return { role: "functionDef", funcName: tokens[0].name, paramName: tokens[2].name, rhs: tokens.slice(5) };
+    }
+
+    // それ以外は呼び出し：引数部分のトークン列を括弧の対応から取り出す
+    const closeIdx = matchingRParenIndex(tokens, idx + 1);
+    if (closeIdx === -1) continue;
+    const argTokens = tokens.slice(idx + 2, closeIdx);
+    return { role: "functionCall", funcName: block.value, argTokens };
+  }
+  return variableFallback || { role: "variable" };
+}
+
+function tokensToDisplayString(tokens) {
+  const OP_DISPLAY = { "+": "+", "-": "-", "*": "×", "/": "÷" };
+  return tokens
+    .map((t) => {
+      if (t.t === "num") return String(t.v);
+      if (t.t === "var") return t.name;
+      if (t.t === "op") return OP_DISPLAY[t.v] || t.v;
+      if (t.t === "lparen") return "(";
+      if (t.t === "rparen") return ")";
+      return "";
+    })
+    .join("");
+}
+
+/* ---- 文字ブロックの値ツールチップ：ホバー／長押しで表示する ---- */
 let suppressNextLetterClick = false;
 
 function ensureVarTooltipEl() {
@@ -769,11 +1030,62 @@ function ensureVarTooltipEl() {
 }
 
 function showVarTooltip(block, anchorEl) {
-  const { varValues } = resolveVariables();
-  const has = Object.prototype.hasOwnProperty.call(varValues, block.value);
-  const text = `${block.value}=${has ? varValues[block.value] : "undefined"}`;
+  const occurrence = classifyLetterOccurrence(block);
   const tip = ensureVarTooltipEl();
-  tip.textContent = text;
+  tip.innerHTML = "";
+  tip.classList.remove("tooltip-danger");
+
+  const valueLine = document.createElement("div");
+  valueLine.className = "var-tooltip-value";
+
+  if (occurrence.role === "functionDef") {
+    // 入力が無い状態＝関数そのものの定義を、そのまま読みやすい形で出す
+    valueLine.textContent = `${occurrence.funcName}(${occurrence.paramName})=${tokensToDisplayString(occurrence.rhs)}`;
+  } else if (occurrence.role === "functionCall") {
+    const { varValues, funcs } = resolveVariables();
+    let argVal;
+    try {
+      argVal = evalExpr(occurrence.argTokens, varValues, funcs);
+    } catch (e) {
+      valueLine.textContent = `${occurrence.funcName}(?)=undefined`;
+      tip.appendChild(valueLine);
+      positionTooltip(tip, anchorEl);
+      return;
+    }
+    const fn = funcs[occurrence.funcName];
+    let outVal;
+    try {
+      if (!fn) throw new Error("undefined function");
+      outVal = evalExpr(fn.rhs, { ...varValues, [fn.paramName]: argVal }, funcs);
+      valueLine.textContent = `${occurrence.funcName}(${argVal})=${outVal}`;
+    } catch (e) {
+      valueLine.textContent = `${occurrence.funcName}(${argVal})=undefined`;
+    }
+  } else {
+    const status = explainVariableStatus(block.value);
+    valueLine.textContent = `${block.value}=${status.defined ? status.value : "undefined"}`;
+  }
+
+  tip.appendChild(valueLine);
+  positionTooltip(tip, anchorEl);
+}
+
+// 失敗している式（代入がまだ成立していない×印のついた式）にホバー／長押しした時、
+// 「なぜ成立していないか」を式そのものへの注釈として出す（変数個別の注釈とは別）。
+function showEquationFailureTooltip(reasonText, anchorEl) {
+  const tip = ensureVarTooltipEl();
+  tip.innerHTML = "";
+  tip.classList.add("tooltip-danger");
+
+  const line = document.createElement("div");
+  line.className = "var-tooltip-reason";
+  line.textContent = reasonText;
+  tip.appendChild(line);
+
+  positionTooltip(tip, anchorEl);
+}
+
+function positionTooltip(tip, anchorEl) {
   const rect = anchorEl.getBoundingClientRect();
   tip.style.left = `${rect.left + rect.width / 2}px`;
   tip.style.top = `${rect.top - 8}px`;
@@ -823,6 +1135,30 @@ function attachVarTooltipHandlers(block, el) {
   });
 }
 
+// 失敗している式（×印）の当たり判定に、ホバー／長押しで理由を出すハンドラを付ける
+function attachEquationFailureTooltipHandlers(hitzone, reasonText) {
+  hitzone.addEventListener("mouseenter", () => showEquationFailureTooltip(reasonText, hitzone));
+  hitzone.addEventListener("mouseleave", hideVarTooltip);
+
+  let touchTimer = null;
+  hitzone.addEventListener(
+    "touchstart",
+    (ev) => {
+      ev.stopPropagation();
+      clearTimeout(touchTimer);
+      touchTimer = setTimeout(() => showEquationFailureTooltip(reasonText, hitzone), LONG_PRESS_MS);
+    },
+    { passive: true }
+  );
+  hitzone.addEventListener("touchmove", () => clearTimeout(touchTimer));
+  hitzone.addEventListener("touchend", (ev) => {
+    clearTimeout(touchTimer);
+    ev.stopPropagation();
+    hideVarTooltip();
+  });
+  hitzone.addEventListener("touchcancel", () => clearTimeout(touchTimer));
+}
+
 function renderHighlights() {
   // 既存のハイライトを削除
   els.board.querySelectorAll(".reachable-cell").forEach((n) => n.remove());
@@ -863,12 +1199,30 @@ function renderEquationGlows() {
     glow.style.width = `calc(var(--cell-size) * ${spanX} + ${PAD * 2}px)`;
     glow.style.height = `calc(var(--cell-size) * ${spanY} + ${PAD * 2}px)`;
     els.board.appendChild(glow);
+    return glow;
   };
 
   for (const run of getSatisfiedRuns()) drawGlow(run, "equation-glow");
   for (const run of getSatisfiedAssignmentRuns()) drawGlow(run, "assignment-glow");
-  // 同じ変数への重複代入（失敗している代入）には×印をつける
-  for (const run of getConflictedAssignmentRuns()) drawGlow(run, "assignment-conflict");
+  // 完成しているのに成立していない代入・関数定義（重複・右辺が未解決・入力変数がすでに変数として
+  // 使われている 等）には×印をつける。×の中央に小さな当たり判定を置き、そこにホバー／長押しすると
+  // 「式全体」への注釈として理由が出る（枠全体をホバー対象にすると、その下のブロックがクリック
+  // できなくなってしまうため）。ここは1回のresolveVariables()の結果だけを使う（run同士の参照を
+  // 別呼び出しとまたいで突き合わせようとすると、getRunsが毎回新しいオブジェクトを作るため
+  // 一致しなくなるので注意）。
+  const { varValues, funcs, varCandidates, funcCandidates, satisfiedVarRunIds, satisfiedFuncRunIds, nameCounts, funcNameCounts } =
+    resolveVariables();
+  const allCandidates = [...varCandidates, ...funcCandidates];
+  const satisfiedAll = new Set([...satisfiedVarRunIds, ...satisfiedFuncRunIds]);
+  for (const cand of allCandidates) {
+    if (satisfiedAll.has(cand.run)) continue;
+    const box = drawGlow(cand.run, "assignment-conflict");
+    const hitzone = document.createElement("div");
+    hitzone.className = "assignment-conflict-hitzone";
+    box.appendChild(hitzone);
+    const reason = explainFailureForCandidate(cand, varValues, funcs, nameCounts, funcNameCounts);
+    attachEquationFailureTooltipHandlers(hitzone, reason);
+  }
 }
 
 // まだ機能していない（式が成立していない）「＝」ブロックに、赤みの色と！マークをつける。
@@ -877,7 +1231,7 @@ function renderEquationGlows() {
 //   独立させて高いz-indexを持たせることで常に最前面に表示する。）
 function updateEqualsBlockStates() {
   const runs = getRuns();
-  const { varValues } = resolveVariables();
+  const { varValues, funcs } = resolveVariables();
   els.board.querySelectorAll(".eq-warning-badge").forEach((n) => n.remove());
 
   for (const block of Object.values(state.blocks)) {
@@ -887,7 +1241,7 @@ function updateEqualsBlockStates() {
 
     const wantDir = (block.orientation || "horizontal") === "horizontal" ? "h" : "v";
     const run = runs.find((r) => r.dir === wantDir && r.blocks.includes(block));
-    const satisfied = !!run && checkRun(run, varValues);
+    const satisfied = !!run && checkRun(run, varValues, funcs);
 
     el.classList.toggle("eq-unsatisfied", !satisfied);
     if (!satisfied) {
