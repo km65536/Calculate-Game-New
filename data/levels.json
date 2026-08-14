@@ -22,13 +22,23 @@
     },
     {
       "id": "level5",
-      "name": "ステージ5：Make Ten?",
+      "name": "ステージ5：Make Ten??",
       "file": "data/level5.json"
     },
     {
       "id": "level6",
-      "name": "ステージ6：Make Ten 2",
+      "name": "ステージ6：Make Ten!!",
       "file": "data/level6.json"
+    },
+    {
+      "id": "level7",
+      "name": "ステージ7：箱の中身",
+      "file": "data/level7.json"
+    },
+    {
+      "id": "level8",
+      "name": "ステージ8：代入ドミノ",
+      "file": "data/level8.json"
     }
   ]
 }

@@ -22,15 +22,18 @@
   --accent-strong: #f2b957;
   --accent-soft: rgba(226, 165, 58, 0.28);
   --success: #7fd8a4;
+  --danger: #e0554b;
   --oneway: #57c7d4;
+  --assign: #b48af0;
 
   /* ブロックの色（ゲームルールで指定された配色） */
-  --wall-fill: #0c0c0e;
   --wall-edge: #d1453d;
   --number-fill: #bfe6f5;
   --number-text: #0c2c3d;
   --symbol-fill: #fbe9a0;
   --symbol-text: #40340a;
+  --letter-fill: #ddd0f7;
+  --letter-text: #392a5c;
   --fixed-edge: #d1453d;
 
   --cell-size: 56px;
@@ -182,6 +185,29 @@ main { width: 100%; }
   border-radius: 0 8px 8px 0;
 }
 
+/* 文字ブロック（変数）の値を示すツールチップ（ホバー／長押しで表示） */
+.var-tooltip {
+  position: fixed;
+  z-index: 50;
+  transform: translate(-50%, -100%);
+  background: var(--ink-950);
+  color: var(--text-bright);
+  border: 1px solid var(--letter-fill);
+  padding: 4px 9px;
+  border-radius: 6px;
+  font-family: ui-monospace, "Courier New", monospace;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  box-shadow: 0 6px 16px -6px rgba(0, 0, 0, 0.6);
+}
+.var-tooltip.visible {
+  opacity: 1;
+}
+
 .footnote {
   text-align: center;
   color: var(--text-dim);
@@ -192,46 +218,76 @@ main { width: 100%; }
 
 /* ---------- ステージ選択 ---------- */
 .level-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.level-progress {
+  margin: -10px 0 16px;
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--accent);
 }
 
 .loading { color: var(--text-dim); font-size: 13px; }
 
-.level-card {
+.level-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
   text-align: left;
+  width: 100%;
   border: 1px solid var(--line-soft);
   background: linear-gradient(180deg, var(--ink-800), var(--ink-900));
-  border-radius: 12px;
-  padding: 18px;
+  border-radius: 9px;
+  padding: 9px 14px;
   cursor: pointer;
   color: var(--text-bright);
   font-family: inherit;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: border-color 0.12s ease, background 0.12s ease;
 }
-.level-card:hover {
+.level-row:hover {
   border-color: var(--accent-soft);
-  transform: translateY(-2px);
-  box-shadow: 0 10px 24px -12px rgba(0,0,0,0.6);
+  background: linear-gradient(180deg, var(--ink-700), var(--ink-800));
 }
-.level-card .num {
+.level-row.is-cleared {
+  border-color: rgba(127, 216, 164, 0.3);
+}
+.level-row .stage-num {
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border-radius: 7px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
   font-family: ui-monospace, "Courier New", monospace;
-  font-size: 12px;
-  letter-spacing: 0.12em;
-  color: var(--accent);
-}
-.level-card .name { font-size: 16px; font-weight: 700; }
-.level-card .desc { font-size: 12.5px; color: var(--text-dim); line-height: 1.5; }
-.level-card .status {
-  margin-top: 6px;
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  color: #7fd8a4;
   font-weight: 700;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.level-row.is-cleared .stage-num {
+  background: rgba(127, 216, 164, 0.22);
+  color: var(--success);
+}
+.level-row .name {
+  font-size: 14px;
+  font-weight: 700;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.level-row .status {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--success);
+  font-weight: 700;
+  flex-shrink: 0;
 }
 
 /* ---------- 盤面 ---------- */
@@ -240,7 +296,7 @@ main { width: 100%; }
   overflow: auto;
   display: flex;
   justify-content: center;
-  padding: 10px 0 6px;
+  padding: 10px 4px 6px;
 }
 
 #board {
@@ -251,7 +307,13 @@ main { width: 100%; }
     linear-gradient(90deg, var(--paper-line) 1px, transparent 1px);
   background-size: var(--cell-size) var(--cell-size);
   border-radius: var(--radius);
-  box-shadow: 0 20px 50px -20px rgba(0,0,0,0.65), inset 0 0 0 1px rgba(15,40,60,0.15);
+  /* 枠線は border ではなく box-shadow で描く。
+     border だと box-sizing: border-box の影響で内側の実面積が数px削られ、
+     右端・下端のマスがわずかに見切れてしまう（実際に起きた不具合）。 */
+  box-shadow:
+    0 0 0 3px var(--wall-edge),
+    0 20px 50px -20px rgba(0, 0, 0, 0.65),
+    inset 0 0 0 1px rgba(15, 40, 60, 0.15);
   flex-shrink: 0;
 }
 
@@ -299,6 +361,53 @@ main { width: 100%; }
   50% { opacity: 1; transform: scale(1.015); }
 }
 
+/* 成立した代入(:=)を囲む枠。等式(=)の緑と見分けがつくよう紫系の色違いにする */
+.assignment-glow {
+  position: absolute;
+  border-radius: 10px;
+  border: 3px solid var(--assign);
+  background: rgba(180, 138, 240, 0.22);
+  box-shadow:
+    0 0 0 3px rgba(180, 138, 240, 0.25),
+    0 0 26px rgba(180, 138, 240, 0.85),
+    0 0 54px rgba(180, 138, 240, 0.45),
+    inset 0 0 18px rgba(180, 138, 240, 0.4);
+  pointer-events: none;
+  animation: eq-glow-pop 0.4s ease-out, assign-glow-pulse 1.6s ease-in-out 0.4s infinite;
+}
+
+@keyframes assign-glow-pulse {
+  0%, 100% { opacity: 0.88; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.015); }
+}
+
+/* 同じ変数への代入が複数あって失敗している式：赤い枠＋大きな×印。ブロックより手前に出す */
+.assignment-conflict {
+  position: absolute;
+  z-index: 7;
+  border-radius: 10px;
+  border: 3px solid var(--danger);
+  background: rgba(224, 85, 75, 0.18);
+  box-shadow:
+    0 0 0 3px rgba(224, 85, 75, 0.22),
+    0 0 24px rgba(224, 85, 75, 0.65),
+    inset 0 0 16px rgba(224, 85, 75, 0.32);
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: eq-glow-pop 0.3s ease-out;
+}
+.assignment-conflict::after {
+  content: "×";
+  color: rgba(255, 255, 255, 0.95);
+  font-family: ui-monospace, "Courier New", monospace;
+  font-weight: 700;
+  font-size: calc(var(--cell-size) * 0.8);
+  line-height: 1;
+  text-shadow: 0 0 10px rgba(224, 85, 75, 0.9), 0 2px 0 rgba(0, 0, 0, 0.3);
+}
+
 /* ---------- ブロック共通 ---------- */
 .block {
   position: absolute;
@@ -312,58 +421,103 @@ main { width: 100%; }
   transition: left 0.14s linear, top 0.14s linear, box-shadow 0.15s ease;
 }
 
-.block-wall {
-  background: var(--wall-fill);
-  border: 3px solid transparent;
+/* 壁：マスとマスの間の「辺」に細い赤いバーとして描く */
+/* 壁：縦向きの画像1枚だけを使い、横向きはCSSのrotateで作る（回転後の見た目が
+   最終的な位置に来るよう、JS側で回転前の中心位置に配置してから回す） */
+.edge-wall {
+  position: absolute;
+  z-index: 2;
+  width: 6px;
+  height: var(--cell-size);
+  pointer-events: none;
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+  background-image: url("assets/wall.png");
 }
+.edge-wall-h { transform: rotate(90deg); }
 
-/* 一方通行ブロック：矢印の向きにだけ通り抜けられる */
-.block-oneway {
-  background: #142230;
-  border: 2px solid rgba(87, 199, 212, 0.45);
-  border-radius: 4px;
+/* 一方通行：右向きの画像1枚だけを使い回す。
+   left = 反転(scaleX)、down/up = 回転(rotate)。
+   両端ティール→中央黒のグラデーションと帯の形は画像に焼き込み済み。 */
+.edge-oneway-bar {
+  position: absolute;
+  z-index: 2;
+  width: 12px;
+  height: var(--cell-size);
+  pointer-events: none;
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+  background-image: url("assets/arrow.png");
 }
-.oneway-arrow {
-  color: var(--oneway);
-  font-size: calc(var(--cell-size) * 0.5);
-  line-height: 1;
-  text-shadow: 0 0 8px rgba(87, 199, 212, 0.6);
-}
-.block-wall.edge-t { border-top-color: var(--wall-edge); }
-.block-wall.edge-r { border-right-color: var(--wall-edge); }
-.block-wall.edge-b { border-bottom-color: var(--wall-edge); }
-.block-wall.edge-l { border-left-color: var(--wall-edge); }
+.edge-oneway-bar.dir-left { transform: scaleX(-1); }
+.edge-oneway-bar.dir-down { transform: rotate(90deg); }
+.edge-oneway-bar.dir-up { transform: rotate(-90deg); }
 
 .block-number,
-.block-symbol {
+.block-symbol,
+.block-letter {
   border-radius: 6px;
   font-family: ui-monospace, "SFMono-Regular", "Courier New", monospace;
   font-size: calc(var(--cell-size) * 0.46);
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
 }
 
 .block-number {
-  background: var(--number-fill);
+  background-image: url("assets/block_number.png");
   color: var(--number-text);
-  box-shadow: inset 0 -3px 0 rgba(12, 44, 61, 0.18);
+}
+.block-number.fixed {
+  /* 複数background-image：先に書いた方が手前。赤い枠(透明中心)をベースの塗りの上に重ねる */
+  background-image: url("assets/border_fixed.png"), url("assets/block_number.png");
 }
 
 .block-symbol {
-  background: var(--symbol-fill);
+  background-image: url("assets/block_symbol.png");
   color: var(--symbol-text);
-  box-shadow: inset 0 -3px 0 rgba(64, 52, 10, 0.18);
+}
+.block-symbol.fixed {
+  background-image: url("assets/border_fixed.png"), url("assets/block_symbol.png");
 }
 
-.block-number.fixed,
-.block-symbol.fixed {
-  border: 3px solid var(--fixed-edge);
+/* まだ成立していない「＝」ブロック：少し赤みを帯びた画像に差し替えて、右上に！バッジ画像を出す */
+.block-symbol.eq-unsatisfied {
+  background-image: url("assets/block_symbol_unsatisfied.png");
+}
+.block-symbol.fixed.eq-unsatisfied {
+  background-image: url("assets/border_fixed.png"), url("assets/block_symbol_unsatisfied.png");
+}
+
+.block-letter {
+  background-image: url("assets/block_letter.png");
+  color: var(--letter-text);
+  /* Unicodeの数学用イタリック文字（𝑎, 𝑥 など）を使うので、グリフ自体がすでに斜体。
+     CSS側でfont-style:italicはかけない（二重に斜めになってしまうため）。 */
+}
+.block-letter.fixed {
+  background-image: url("assets/border_fixed.png"), url("assets/block_letter.png");
+}
+
+.eq-warning-badge {
+  position: absolute;
+  z-index: 6; /* ブロック(z-index:2)より必ず手前に来るように。子要素ではなく盤面直下の独立要素にしてある */
+  width: calc(var(--cell-size) * 0.34);
+  height: calc(var(--cell-size) * 0.34);
+  min-width: 14px;
+  min-height: 14px;
+  background-image: url("assets/warning_badge.png");
+  background-size: 100% 100%;
+  pointer-events: none;
 }
 
 .block-number.movable,
-.block-symbol.movable {
+.block-symbol.movable,
+.block-letter.movable {
   cursor: pointer;
 }
 .block-number.movable:hover,
-.block-symbol.movable:hover {
+.block-symbol.movable:hover,
+.block-letter.movable:hover {
   filter: brightness(1.05);
 }
 
@@ -440,7 +594,10 @@ main { width: 100%; }
   background-size: var(--cell-size) var(--cell-size);
   border-radius: 8px;
   overflow: hidden;
-  box-shadow: inset 0 0 0 1px rgba(15, 40, 60, 0.15), 0 10px 22px -12px rgba(0, 0, 0, 0.55);
+  box-shadow:
+    0 0 0 2px var(--wall-edge),
+    inset 0 0 0 1px rgba(15, 40, 60, 0.15),
+    0 10px 22px -12px rgba(0, 0, 0, 0.55);
 }
 /* プレビュー内のブロックはクリックできない見本表示にする */
 .clear-preview .block {

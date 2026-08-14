@@ -21,6 +21,7 @@ const state = {
   height: 0,
   blocks: {},           // id -> block（現在の可変状態。x, y が動く）
   grid: [],             // grid[y][x] = blockId | null
+  edges: { v: [], h: [] }, // 壁・一方通行（マスとマスの間の辺）。レベル中は不変。
   selectedId: null,
   reachable: new Map(), // "x,y" -> {x,y}（現在ハイライト中のマス）
   history: [],          // {blockId, from:{x,y}, to:{x,y}, path:[{x,y}...]}
@@ -71,6 +72,7 @@ async function loadLevel(meta) {
     state.blocks[b.id] = { ...b };
   }
   state.grid = buildGrid();
+  state.edges = level.edges;
   state.selectedId = null;
   state.reachable = new Map();
   state.history = [];
@@ -79,33 +81,52 @@ async function loadLevel(meta) {
 /* ---------- 2次元配列(grid)形式のレベル定義パーサー ----------
    マップは data/level*.json 内の "grid" プロパティに、
    行(y) × 列(x) の2次元配列として書く。1マス1トークン。
+   盤面の外に出ることはそもそもできないので、周囲を壁で囲む必要はない。
 
-   トークンの書き方:
+   セルのトークン（マスの中身）:
      "."  空きマス
-     "#"  壁ブロック（動かない）
      "3"  数字ブロック（動かせる。0〜9）
      "3!" 数字ブロック（動かせない。末尾の "!" が「固定」の意味）
-     "+" "-" "x" "/" "(" ")"   記号ブロック（動かせる）
-       ※ x=× (かける)、/=÷ (わる) のエイリアスとして使える
+     "+" "-" "*" "/" "(" ")"   記号ブロック（動かせる）
+       ※ *=× (かける)、/=÷ (わる) のエイリアスとして使える（ファイル上の書きやすさのため。
+         盤面の見た目では文字ブロックの"x"とは別物として表示されるので混同しない）
      "+!" のように末尾に "!" を付けると固定（動かせない）記号ブロックになる
      "="  横向きの＝（動かせる）　　"=!" 横向きの＝（固定）
      "|"  縦向きの＝(‖) （動かせる）　"|!" 縦向きの＝（固定）
-     ">" "<" "^" "v"  一方通行ブロック（矢印の向きに進むときだけ通り抜けられる。動かせない）
+     ":=" 代入の記号（動かせる）　　":=!" 代入の記号（固定）
+     "a" "b" "c" "d" "x" "y" "z" "f" "g" "h"
+          文字ブロック＝変数（動かせる。それぞれの文字自体に意味はない）
+          "x!" のように末尾に "!" を付けると固定になる（他の文字ブロックと同様）
+          数字ブロックと違って、文字ブロック同士は隣接しても連結しない
+          （常に1マス＝1文字として扱われる）
 
-   例（1+2=3 を作るステージ）:
-     [
-       ["#","#","#","#","#","#","#"],
-       ["#","3",".","1",".","2","#"],
-       ["#",".","+!",".","=!",".","#"],
-       ["#",".",".",".",".",".","#"],
-       ["#","#","#","#","#","#","#"]
-     ]
+   壁・一方通行は「マス」ではなく「マスとマスの間の辺」に置く。
+   "walls" プロパティに以下の2つの2次元配列を書く（省略した場合は全て開いた状態＝壁なし）:
+     "v": 縦の辺（左右に隣り合うマスの境界）。行数=height、各行の要素数=width-1。
+          v[y][x] は マス(x,y) と マス(x+1,y) の間の辺。
+          "." 開いている　"#" 壁（両方向とも通れない）
+          ">" 右向きの一方通行（右へは通れるが左へは通れない）
+          "<" 左向きの一方通行
+     "h": 横の辺（上下に隣り合うマスの境界）。行数=height-1、各行の要素数=width。
+          h[y][x] は マス(x,y) と マス(x,y+1) の間の辺。
+          "." 開いている　"#" 壁
+          "v" 下向きの一方通行（下へは通れるが上へは通れない）
+          "^" 上向きの一方通行
+
+   例（1+2=3 を作るステージ。周囲の壁は不要になった）:
+     {
+       "grid": [
+         ["3",".","1",".","2"],
+         [".","+!",".","=!","."],
+         [".",".",".",".","."]
+       ]
+     }
 */
 
 const SYMBOL_TOKEN_ALIASES = {
   "+": "+",
   "-": "-",
-  x: "×",
+  "*": "×",
   "×": "×",
   "/": "÷",
   "÷": "÷",
@@ -113,15 +134,12 @@ const SYMBOL_TOKEN_ALIASES = {
   ")": ")",
 };
 
+// 文字ブロック（変数）として使える文字。それぞれに特定の意味はなく、区別できる文字であればよい。
+const LETTER_SET = new Set(["a", "b", "c", "d", "x", "y", "z", "f", "g", "h"]);
+
 function parseCellToken(rawToken, x, y) {
   const token = rawToken == null ? "." : String(rawToken).trim();
   if (token === "." || token === "") return null;
-  if (token === "#") return { type: "wall", x, y };
-  // 一方通行ブロック：矢印の向きに進むときだけ通り抜けられる（動かせない構造ブロック）
-  if (token === ">") return { type: "oneway", direction: "right", x, y };
-  if (token === "<") return { type: "oneway", direction: "left", x, y };
-  if (token === "^") return { type: "oneway", direction: "up", x, y };
-  if (token === "v" || token === "V") return { type: "oneway", direction: "down", x, y };
 
   let core = token;
   let fixed = false;
@@ -139,11 +157,40 @@ function parseCellToken(rawToken, x, y) {
   if (core === "|" || core === "‖") {
     return { type: "symbol", value: "=", orientation: "vertical", movable: !fixed, x, y };
   }
+  if (core === ":=") {
+    return { type: "symbol", value: ":=", movable: !fixed, x, y };
+  }
+  if (LETTER_SET.has(core)) {
+    return { type: "letter", value: core, movable: !fixed, x, y };
+  }
   if (SYMBOL_TOKEN_ALIASES[core]) {
     return { type: "symbol", value: SYMBOL_TOKEN_ALIASES[core], movable: !fixed, x, y };
   }
   console.warn(`[level "${x},${y}"] unknown token "${rawToken}" — このマスは空きマス扱いにします`);
   return null;
+}
+
+// 辺のトークンを正規化する。不正な値は「開いている」扱いにする。
+function normalizeEdgeToken(t) {
+  if (t == null || t === "") return ".";
+  const s = String(t).trim();
+  if (s === "V") return "v";
+  if (s === "." || s === "#" || s === ">" || s === "<" || s === "^" || s === "v") return s;
+  return ".";
+}
+
+function buildEdgesFromDef(wallsDef, width, height) {
+  const vSrc = (wallsDef && wallsDef.v) || [];
+  const hSrc = (wallsDef && wallsDef.h) || [];
+  const v = Array.from({ length: height }, (_, y) => {
+    const row = vSrc[y] || [];
+    return Array.from({ length: Math.max(0, width - 1) }, (_, x) => normalizeEdgeToken(row[x]));
+  });
+  const h = Array.from({ length: Math.max(0, height - 1) }, (_, y) => {
+    const row = hSrc[y] || [];
+    return Array.from({ length: width }, (_, x) => normalizeEdgeToken(row[x]));
+  });
+  return { v, h };
 }
 
 function levelFromGridDef(def) {
@@ -162,7 +209,8 @@ function levelFromGridDef(def) {
       }
     }
   }
-  return { id: def.id, name: def.name, hint: def.hint, width, height, blocks };
+  const edges = buildEdgesFromDef(def.walls, width, height);
+  return { id: def.id, name: def.name, hint: def.hint, width, height, blocks, edges };
 }
 
 /* ---------------- 3. グリッド／到達可能マス探索 ---------------- */
@@ -179,24 +227,31 @@ const DIRS = [
   [0, 1],
   [0, -1],
 ];
-const DIR_NAME_BY_DELTA = { "1,0": "right", "-1,0": "left", "0,1": "down", "0,-1": "up" };
 
-// (nx,ny) のマスに、(dx,dy) 方向に進んで入れるかどうかを判定する。
-// 空きマス：常に通れる。一方通行ブロック：矢印と進行方向が一致する時だけ通れる。
-// それ以外（壁・数字・記号ブロック）：常に通れない。
-function isPassable(nx, ny, dx, dy) {
-  const id = state.grid[ny][nx];
-  if (id === null) return true;
-  const b = state.blocks[id];
-  if (b.type === "oneway") {
-    return DIR_NAME_BY_DELTA[`${dx},${dy}`] === b.direction;
+// (cx,cy) から (dx,dy) 方向へ進んで (nx,ny) に入れるかどうかを判定する。
+// 1. まず (cx,cy)-(nx,ny) の間の「辺」を見る。壁ならどちら向きにも通れない。
+//    一方通行なら、矢印と進行方向が逆なら通れない。
+// 2. 辺が開いていても、(nx,ny) 自体に数字・記号ブロックが乗っていれば通れない。
+function isPassable(cx, cy, nx, ny, dx, dy) {
+  if (dx === 1) {
+    const t = state.edges.v[cy] && state.edges.v[cy][cx];
+    if (t === "#" || t === "<") return false;
+  } else if (dx === -1) {
+    const t = state.edges.v[cy] && state.edges.v[cy][nx];
+    if (t === "#" || t === ">") return false;
+  } else if (dy === 1) {
+    const t = state.edges.h[cy] && state.edges.h[cy][cx];
+    if (t === "#" || t === "^") return false;
+  } else if (dy === -1) {
+    const t = state.edges.h[ny] && state.edges.h[ny][cx];
+    if (t === "#" || t === "v") return false;
   }
-  return false;
+  return state.grid[ny][nx] === null;
 }
 
 // 指定ブロックが「曲がりながら」到達できる空きマスを幅優先探索で全て求める。
-// 経路上のどのマスも、壁・他ブロック（動かせる／動かせない問わず）で塞がれていたら通れない。
-// ただし一方通行ブロックは、矢印の向きに進む場合に限り通り抜けられる。
+// 経路上のどのマスも、他ブロック（動かせる／動かせない問わず）で塞がれていたら通れない。
+// 壁や一方通行は「マスとマスの間の辺」にあり、isPassableでその通行可否を判定する。
 function computeReachable(startX, startY) {
   const visited = new Map(); // "x,y" -> parentKey
   const startKey = `${startX},${startY}`;
@@ -210,7 +265,7 @@ function computeReachable(startX, startY) {
       if (nx < 0 || ny < 0 || nx >= state.width || ny >= state.height) continue;
       const key = `${nx},${ny}`;
       if (visited.has(key)) continue;
-      if (!isPassable(nx, ny, dx, dy)) continue;
+      if (!isPassable(cx, cy, nx, ny, dx, dy)) continue;
       visited.set(key, `${cx},${cy}`);
       queue.push([nx, ny]);
     }
@@ -238,6 +293,15 @@ function reconstructPath(parentMap, targetX, targetY) {
 
 const OP_MAP = { "+": "+", "-": "-", "×": "*", "÷": "/" };
 
+// 縦の辺(x,y)-(x+1,y)が壁かどうか
+function edgeVIsWall(x, y) {
+  return !!(state.edges.v[y] && state.edges.v[y][x] === "#");
+}
+// 横の辺(x,y)-(x,y+1)が壁かどうか
+function edgeHIsWall(x, y) {
+  return !!(state.edges.h[y] && state.edges.h[y][x] === "#");
+}
+
 function getRuns() {
   const runs = [];
   for (let y = 0; y < state.height; y++) {
@@ -245,12 +309,12 @@ function getRuns() {
     for (let x = 0; x < state.width; x++) {
       const id = state.grid[y][x];
       const b = id ? state.blocks[id] : null;
-      if (b && b.type !== "wall" && b.type !== "oneway") {
-        run.push(b);
-      } else {
+      const wallBefore = x > 0 && edgeVIsWall(x - 1, y);
+      if (!b || wallBefore) {
         if (run.length) runs.push({ dir: "h", blocks: run });
         run = [];
       }
+      if (b) run.push(b);
     }
     if (run.length) runs.push({ dir: "h", blocks: run });
   }
@@ -259,12 +323,12 @@ function getRuns() {
     for (let y = 0; y < state.height; y++) {
       const id = state.grid[y][x];
       const b = id ? state.blocks[id] : null;
-      if (b && b.type !== "wall" && b.type !== "oneway") {
-        run.push(b);
-      } else {
+      const wallBefore = y > 0 && edgeHIsWall(x, y - 1);
+      if (!b || wallBefore) {
         if (run.length) runs.push({ dir: "v", blocks: run });
         run = [];
       }
+      if (b) run.push(b);
     }
     if (run.length) runs.push({ dir: "v", blocks: run });
   }
@@ -276,6 +340,11 @@ function runHasOrientedEquals(run) {
   return run.blocks.some(
     (b) => b.type === "symbol" && b.value === "=" && (b.orientation || "horizontal") === wantOrientation
   );
+}
+
+// runが「:=（代入）」を含むかどうか
+function runHasAssignment(run) {
+  return run.blocks.some((b) => b.type === "symbol" && b.value === ":=");
 }
 
 function tokenizeRun(run) {
@@ -290,9 +359,14 @@ function tokenizeRun(run) {
   for (const b of run.blocks) {
     if (b.type === "number") {
       numBuf += String(b.value);
+    } else if (b.type === "letter") {
+      // 数字と違い、文字ブロックは隣接していても連結しない。常に1マス=1変数。
+      flushNum();
+      tokens.push({ t: "var", name: b.value });
     } else {
       flushNum();
       if (b.value === "=") tokens.push({ t: "eq" });
+      else if (b.value === ":=") tokens.push({ t: "assign" });
       else if (b.value === "(") tokens.push({ t: "lparen" });
       else if (b.value === ")") tokens.push({ t: "rparen" });
       else tokens.push({ t: "op", v: OP_MAP[b.value] });
@@ -302,7 +376,9 @@ function tokenizeRun(run) {
   return tokens;
 }
 
-function evalExpr(tokens) {
+// varValues: { 変数名: 数値 } 。省略した場合は変数を一切解決できないものとして評価する。
+function evalExpr(tokens, varValues) {
+  const vars = varValues || {};
   let pos = 0;
   const peek = () => tokens[pos];
   const next = () => tokens[pos++];
@@ -337,6 +413,13 @@ function evalExpr(tokens) {
       next();
       return tk.v;
     }
+    if (tk.t === "var") {
+      next();
+      if (!Object.prototype.hasOwnProperty.call(vars, tk.name)) {
+        throw new Error(`unresolved variable ${tk.name}`);
+      }
+      return vars[tk.name];
+    }
     if (tk.t === "lparen") {
       next();
       const v = parseExpr();
@@ -353,7 +436,7 @@ function evalExpr(tokens) {
   return result;
 }
 
-function checkRun(run) {
+function checkRun(run, varValues) {
   const tokens = tokenizeRun(run);
   const segments = [[]];
   for (const tk of tokens) {
@@ -362,7 +445,7 @@ function checkRun(run) {
   }
   if (segments.length < 2) return false;
   try {
-    const values = segments.map((seg) => evalExpr(seg));
+    const values = segments.map((seg) => evalExpr(seg, varValues));
     const eps = 1e-9;
     for (let i = 1; i < values.length; i++) {
       if (Math.abs(values[i] - values[0]) > eps) return false;
@@ -373,16 +456,93 @@ function checkRun(run) {
   }
 }
 
+// runが「代入として成立する形」かどうかを判定する:
+//   左辺に文字ブロックがちょうど1つ、間に:=、右辺に何らかの式があること
+function assignmentShape(run) {
+  const tokens = tokenizeRun(run);
+  const assignIdx = tokens.findIndex((t) => t.t === "assign");
+  if (assignIdx !== 1) return null; // 左辺が「変数1つだけ」でない（:=の位置が1番目でない）
+  if (tokens[0].t !== "var") return null;
+  const rhs = tokens.slice(assignIdx + 1);
+  if (rhs.length === 0) return null;
+  if (rhs.some((t) => t.t === "assign" || t.t === "eq")) return null; // 右辺に=や:=が混ざるのは不正
+  return { varName: tokens[0].name, rhs };
+}
+
+// 盤面上の全ての代入（:=）候補を集め、固定点反復で変数の値を確定させる。
+// 例: x:=1, y:=x+1 のような依存関係も、収束するまで繰り返し評価することで解決する。
+function resolveVariables() {
+  const candidates = getRuns()
+    .filter(runHasAssignment)
+    .map((run) => ({ run, shape: assignmentShape(run) }))
+    .filter((c) => c.shape !== null);
+
+  // 同じ変数名に対する代入が2つ以上あれば「代入が失敗している」とみなし、
+  // それらは値の確定に一切使わない（＝コンフリクト扱い）。
+  const nameCounts = new Map();
+  for (const c of candidates) {
+    nameCounts.set(c.shape.varName, (nameCounts.get(c.shape.varName) || 0) + 1);
+  }
+  const conflictedNames = new Set([...nameCounts.entries()].filter(([, n]) => n > 1).map(([name]) => name));
+  const conflictedRunIds = new Set(candidates.filter((c) => conflictedNames.has(c.shape.varName)).map((c) => c.run));
+
+  const resolvable = candidates.filter((c) => !conflictedNames.has(c.shape.varName));
+
+  const varValues = {};
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const c of resolvable) {
+      if (Object.prototype.hasOwnProperty.call(varValues, c.shape.varName)) continue;
+      try {
+        const val = evalExpr(c.shape.rhs, varValues);
+        varValues[c.shape.varName] = val;
+        changed = true;
+      } catch (e) {
+        // まだ解決できない（未確定の変数を参照している等）。次の周回で再挑戦する。
+      }
+    }
+  }
+
+  // 最終的な varValues を使って、各候補（コンフリクトしていないもの）が
+  // 「今、成立しているか」を個別に判定する
+  const satisfiedRunIds = new Set();
+  for (const c of resolvable) {
+    try {
+      evalExpr(c.shape.rhs, varValues);
+      satisfiedRunIds.add(c.run);
+    } catch (e) {
+      // 未成立。何もしない。
+    }
+  }
+
+  return { varValues, candidates, satisfiedRunIds, conflictedRunIds };
+}
+
 function checkWin() {
+  const { varValues } = resolveVariables();
   const runs = getRuns();
   const checked = runs.filter(runHasOrientedEquals);
   if (checked.length === 0) return false;
-  return checked.every((r) => checkRun(r) === true);
+  return checked.every((r) => checkRun(r, varValues) === true);
 }
 
 // 現在成立している等式（run）だけを抜き出す。ハイライト表示に使う。
 function getSatisfiedRuns() {
-  return getRuns().filter((r) => runHasOrientedEquals(r) && checkRun(r) === true);
+  const { varValues } = resolveVariables();
+  return getRuns().filter((r) => runHasOrientedEquals(r) && checkRun(r, varValues) === true);
+}
+
+// 現在成立している代入（run）だけを抜き出す。ハイライト表示に使う。
+function getSatisfiedAssignmentRuns() {
+  const { candidates, satisfiedRunIds } = resolveVariables();
+  return candidates.filter((c) => satisfiedRunIds.has(c.run)).map((c) => c.run);
+}
+
+// 同じ変数に複数の代入が存在して失敗している（コンフリクトしている）runを抜き出す。×印の表示に使う。
+function getConflictedAssignmentRuns() {
+  const { candidates, conflictedRunIds } = resolveVariables();
+  return candidates.filter((c) => conflictedRunIds.has(c.run)).map((c) => c.run);
 }
 
 /* ---------------- 5. 描画 ---------------- */
@@ -393,6 +553,7 @@ function cacheEls() {
   els.screenSelect = document.getElementById("screen-select");
   els.screenGame = document.getElementById("screen-game");
   els.levelList = document.getElementById("level-list");
+  els.levelProgress = document.getElementById("level-progress");
   els.levelName = document.getElementById("current-level-name");
   els.levelHint = document.getElementById("level-hint");
   els.boardWrap = document.getElementById("board-wrap");
@@ -408,7 +569,28 @@ function cacheEls() {
 }
 
 function symbolGlyph(value) {
+  if (value === ":=") return "\u{2254}"; // ≔ (COLON EQUALS)。内部データ上は":="のまま、見た目だけこの1文字にする
   return value; // '+','-','×','÷','(',')','='
+}
+
+// 文字ブロック（変数）は、CSSの疑似イタリックではなく、Unicodeの数学用イタリック文字
+// （Mathematical Alphanumeric Symbols）を使って表示する。グリフ自体が斜体としてデザイン
+// されているので、フォント側でitalicをかける必要はない。
+// 小文字hだけこのブロックに正式な文字が無く、代わりにℎ（U+210E, プランク定数記号）を使う。
+const LETTER_ITALIC_GLYPH = {
+  a: "\u{1D44E}", // 𝑎
+  b: "\u{1D44F}", // 𝑏
+  c: "\u{1D450}", // 𝑐
+  d: "\u{1D451}", // 𝑑
+  x: "\u{1D465}", // 𝑥
+  y: "\u{1D466}", // 𝑦
+  z: "\u{1D467}", // 𝑧
+  f: "\u{1D453}", // 𝑓
+  g: "\u{1D454}", // 𝑔
+  h: "\u{210E}", // ℎ
+};
+function letterGlyph(value) {
+  return LETTER_ITALIC_GLYPH[value] || value;
 }
 
 function updateCellSize() {
@@ -435,19 +617,25 @@ function cellPx(n) {
 
 function renderLevelSelect() {
   els.levelList.innerHTML = "";
-  for (const meta of state.levelsMeta) {
-    const card = document.createElement("button");
-    card.type = "button";
-    card.className = "level-card";
-    const cleared = state.cleared.has(meta.id);
-    card.innerHTML = `
-      <span class="num">STAGE</span>
-      <span class="name">${escapeHTML(meta.name)}</span>
-      ${cleared ? '<span class="status">✓ CLEAR</span>' : ""}
-    `;
-    card.addEventListener("click", () => openLevel(meta));
-    els.levelList.appendChild(card);
+  const clearedCount = state.levelsMeta.filter((m) => state.cleared.has(m.id)).length;
+  if (els.levelProgress) {
+    const total = state.levelsMeta.length;
+    els.levelProgress.textContent = total ? `クリア状況：${clearedCount} / ${total}` : "";
   }
+  state.levelsMeta.forEach((meta, idx) => {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "level-row";
+    const cleared = state.cleared.has(meta.id);
+    if (cleared) row.classList.add("is-cleared");
+    row.innerHTML = `
+      <span class="stage-num">${idx + 1}</span>
+      <span class="name">${escapeHTML(meta.name)}</span>
+      <span class="status">${cleared ? "✓ CLEAR" : ""}</span>
+    `;
+    row.addEventListener("click", () => openLevel(meta));
+    els.levelList.appendChild(row);
+  });
 }
 
 function escapeHTML(str) {
@@ -462,34 +650,65 @@ function renderBoard() {
   els.board.style.width = cellPx(state.width);
   els.board.style.height = cellPx(state.height);
 
-  const wallEdgeCache = computeWallEdges();
-
   for (const block of Object.values(state.blocks)) {
-    els.board.appendChild(renderBlockEl(block, wallEdgeCache));
+    els.board.appendChild(renderBlockEl(block));
+  }
+  renderEdges();
+}
+
+// 壁・一方通行は「マスとマスの間の辺」に描画する。レベル読み込み時（＝盤面構造が変わる時）だけ呼べば良い。
+// container を渡せば、盤面プレビュー（クリア画面のミニチュア表示）にも同じロジックを使い回せる。
+//
+// 画像素材は「縦向き」を1枚だけ持ち、横向きはCSSのtransform:rotate(90deg)で作る。
+// rotateは要素の中心を軸に回るので、回す前の（縦向きのままの）位置を
+// 「最終的に見せたい横向きの中心」に合わせて配置してから回転させる。
+function renderEdges(container) {
+  const target = container || els.board;
+  // 縦の辺（左右に隣り合うマスの境界）
+  for (let y = 0; y < state.height; y++) {
+    for (let x = 0; x < state.width - 1; x++) {
+      const t = state.edges.v[y][x];
+      if (t === ".") continue;
+      if (t === "#") {
+        const el = document.createElement("div");
+        el.className = "edge-wall";
+        el.style.left = `calc(${cellPx(x + 1)} - 3px)`;
+        el.style.top = cellPx(y);
+        target.appendChild(el);
+      } else {
+        const dirClass = t === ">" ? "dir-right" : "dir-left";
+        const bar = document.createElement("div");
+        bar.className = `edge-oneway-bar ${dirClass}`;
+        bar.style.left = `calc(${cellPx(x + 1)} - 6px)`;
+        bar.style.top = cellPx(y);
+        target.appendChild(bar);
+      }
+    }
+  }
+  // 横の辺（上下に隣り合うマスの境界）：画像は縦向きのまま、中心位置を合わせて90度回す
+  for (let y = 0; y < state.height - 1; y++) {
+    for (let x = 0; x < state.width; x++) {
+      const t = state.edges.h[y][x];
+      if (t === ".") continue;
+      if (t === "#") {
+        const el = document.createElement("div");
+        el.className = "edge-wall edge-wall-h";
+        el.style.left = `calc(${cellPx(x)} + var(--cell-size) * 0.5 - 3px)`;
+        el.style.top = `calc(${cellPx(y + 1)} - var(--cell-size) * 0.5)`;
+        target.appendChild(el);
+      } else {
+        const dirClass = t === "v" ? "dir-down" : "dir-up";
+        const bar = document.createElement("div");
+        bar.className = `edge-oneway-bar ${dirClass}`;
+        bar.style.left = `calc(${cellPx(x)} + var(--cell-size) * 0.5 - 6px)`;
+        bar.style.top = `calc(${cellPx(y + 1)} - var(--cell-size) * 0.5)`;
+        target.appendChild(bar);
+      }
+    }
   }
 }
 
-function computeWallEdges() {
-  // 壁ブロックごとに、隣が壁でない方向を赤枠として出す（連結した壁は外周だけ赤くなる）
-  const edges = {};
-  for (const b of Object.values(state.blocks)) {
-    if (b.type !== "wall") continue;
-    const isWall = (x, y) => {
-      if (x < 0 || y < 0 || x >= state.width || y >= state.height) return false;
-      const id = state.grid[y][x];
-      return id && state.blocks[id].type === "wall";
-    };
-    edges[b.id] = {
-      t: !isWall(b.x, b.y - 1),
-      r: !isWall(b.x + 1, b.y),
-      b: !isWall(b.x, b.y + 1),
-      l: !isWall(b.x - 1, b.y),
-    };
-  }
-  return edges;
-}
-
-function renderBlockEl(block, wallEdgeCache) {
+function renderBlockEl(block) {
   const el = document.createElement("div");
   el.id = `block-${block.id}`;
   el.style.left = cellPx(block.x);
@@ -497,32 +716,16 @@ function renderBlockEl(block, wallEdgeCache) {
   el.style.width = "var(--cell-size)";
   el.style.height = "var(--cell-size)";
 
-  if (block.type === "wall") {
-    el.className = "block block-wall";
-    const e = wallEdgeCache[block.id];
-    if (e.t) el.classList.add("edge-t");
-    if (e.r) el.classList.add("edge-r");
-    if (e.b) el.classList.add("edge-b");
-    if (e.l) el.classList.add("edge-l");
-    return el;
-  }
-
-  if (block.type === "oneway") {
-    el.className = "block block-oneway";
-    const arrow = document.createElement("span");
-    arrow.className = "oneway-arrow";
-    arrow.textContent = { up: "▲", down: "▼", left: "◀", right: "▶" }[block.direction];
-    el.appendChild(arrow);
-    return el;
-  }
-
-  const kind = block.type === "number" ? "block-number" : "block-symbol";
+  const kind =
+    block.type === "number" ? "block-number" : block.type === "letter" ? "block-letter" : "block-symbol";
   el.className = `block ${kind} ${block.movable ? "movable" : "fixed"}`;
 
   const glyph = document.createElement("span");
   glyph.className = "symbol-glyph";
   if (block.type === "number") {
     glyph.textContent = String(block.value);
+  } else if (block.type === "letter") {
+    glyph.textContent = letterGlyph(block.value);
   } else {
     glyph.textContent = symbolGlyph(block.value);
     if (block.value === "=" && block.orientation === "vertical") {
@@ -536,11 +739,88 @@ function renderBlockEl(block, wallEdgeCache) {
   if (block.movable) {
     el.addEventListener("click", (ev) => {
       ev.stopPropagation();
+      if (block.type === "letter" && suppressNextLetterClick) {
+        suppressNextLetterClick = false;
+        return;
+      }
       onBlockClick(block.id);
     });
   }
 
+  if (block.type === "letter") {
+    attachVarTooltipHandlers(block, el);
+  }
+
   return el;
+}
+
+/* ---- 文字ブロック（変数）の値ツールチップ：ホバー／長押しで x=6 のように表示する ---- */
+let suppressNextLetterClick = false;
+
+function ensureVarTooltipEl() {
+  let tip = document.getElementById("var-tooltip");
+  if (!tip) {
+    tip = document.createElement("div");
+    tip.id = "var-tooltip";
+    tip.className = "var-tooltip";
+    document.body.appendChild(tip);
+  }
+  return tip;
+}
+
+function showVarTooltip(block, anchorEl) {
+  const { varValues } = resolveVariables();
+  const has = Object.prototype.hasOwnProperty.call(varValues, block.value);
+  const text = `${block.value}=${has ? varValues[block.value] : "undefined"}`;
+  const tip = ensureVarTooltipEl();
+  tip.textContent = text;
+  const rect = anchorEl.getBoundingClientRect();
+  tip.style.left = `${rect.left + rect.width / 2}px`;
+  tip.style.top = `${rect.top - 8}px`;
+  tip.classList.add("visible");
+}
+
+function hideVarTooltip() {
+  const tip = document.getElementById("var-tooltip");
+  if (tip) tip.classList.remove("visible");
+}
+
+const LONG_PRESS_MS = 500;
+
+function attachVarTooltipHandlers(block, el) {
+  // デスクトップ：ホバーで表示
+  el.addEventListener("mouseenter", () => showVarTooltip(block, el));
+  el.addEventListener("mouseleave", hideVarTooltip);
+
+  // タッチ：一定時間押し続けたら表示。長押しと判定した場合は、その後に来るクリック
+  // （＝移動のための選択）が誤発火しないように抑制する。
+  let touchTimer = null;
+  let longPressed = false;
+  el.addEventListener(
+    "touchstart",
+    () => {
+      longPressed = false;
+      clearTimeout(touchTimer);
+      touchTimer = setTimeout(() => {
+        longPressed = true;
+        showVarTooltip(block, el);
+      }, LONG_PRESS_MS);
+    },
+    { passive: true }
+  );
+  el.addEventListener("touchmove", () => clearTimeout(touchTimer));
+  el.addEventListener("touchend", (ev) => {
+    clearTimeout(touchTimer);
+    if (longPressed) {
+      ev.preventDefault();
+      suppressNextLetterClick = true;
+      hideVarTooltip();
+    }
+  });
+  el.addEventListener("touchcancel", () => {
+    clearTimeout(touchTimer);
+    hideVarTooltip();
+  });
 }
 
 function renderHighlights() {
@@ -562,11 +842,13 @@ function renderHighlights() {
   }
 }
 
-// 成立している等式を、その式全体を囲む枠としてハイライトする
+// 成立している等式を、その式全体を囲む枠としてハイライトする。
+// 代入(:=)が成立しているものは、色違いの枠でハイライトする。
 function renderEquationGlows() {
-  els.board.querySelectorAll(".equation-glow").forEach((n) => n.remove());
+  els.board.querySelectorAll(".equation-glow, .assignment-glow, .assignment-conflict").forEach((n) => n.remove());
   const PAD = 6; // ブロックの外側にはみ出させる分（px）。これがないと枠がブロックの下に隠れて見えない。
-  for (const run of getSatisfiedRuns()) {
+
+  const drawGlow = (run, className) => {
     const xs = run.blocks.map((b) => b.x);
     const ys = run.blocks.map((b) => b.y);
     const minX = Math.min(...xs);
@@ -575,12 +857,48 @@ function renderEquationGlows() {
     const spanY = Math.max(...ys) - minY + 1;
 
     const glow = document.createElement("div");
-    glow.className = "equation-glow";
+    glow.className = className;
     glow.style.left = `calc(${cellPx(minX)} - ${PAD}px)`;
     glow.style.top = `calc(${cellPx(minY)} - ${PAD}px)`;
     glow.style.width = `calc(var(--cell-size) * ${spanX} + ${PAD * 2}px)`;
     glow.style.height = `calc(var(--cell-size) * ${spanY} + ${PAD * 2}px)`;
     els.board.appendChild(glow);
+  };
+
+  for (const run of getSatisfiedRuns()) drawGlow(run, "equation-glow");
+  for (const run of getSatisfiedAssignmentRuns()) drawGlow(run, "assignment-glow");
+  // 同じ変数への重複代入（失敗している代入）には×印をつける
+  for (const run of getConflictedAssignmentRuns()) drawGlow(run, "assignment-conflict");
+}
+
+// まだ機能していない（式が成立していない）「＝」ブロックに、赤みの色と！マークをつける。
+// バッジはブロックの子要素にはせず、盤面に直接重ねる独立した要素にする。
+// （子要素のままだと、はみ出た部分が隣のブロックの下に隠れることがあるため。
+//   独立させて高いz-indexを持たせることで常に最前面に表示する。）
+function updateEqualsBlockStates() {
+  const runs = getRuns();
+  const { varValues } = resolveVariables();
+  els.board.querySelectorAll(".eq-warning-badge").forEach((n) => n.remove());
+
+  for (const block of Object.values(state.blocks)) {
+    if (!(block.type === "symbol" && block.value === "=")) continue;
+    const el = document.getElementById(`block-${block.id}`);
+    if (!el) continue;
+
+    const wantDir = (block.orientation || "horizontal") === "horizontal" ? "h" : "v";
+    const run = runs.find((r) => r.dir === wantDir && r.blocks.includes(block));
+    const satisfied = !!run && checkRun(run, varValues);
+
+    el.classList.toggle("eq-unsatisfied", !satisfied);
+    if (!satisfied) {
+      const badge = document.createElement("div");
+      badge.className = "eq-warning-badge";
+      // ＝ブロックの右上の「角」ちょうどだと半分がブロックの外にはみ出してしまい、
+      // どの＝についているか分かりにくいので、ブロック側に少し寄せて重なりを増やす。
+      badge.style.left = `calc(${cellPx(block.x + 1)} - var(--cell-size) * 0.27)`;
+      badge.style.top = `calc(${cellPx(block.y)} - var(--cell-size) * 0.07)`;
+      els.board.appendChild(badge);
+    }
   }
 }
 
@@ -641,6 +959,7 @@ function onReachableCellClick(x, y) {
   deselect();
   animateAlongPath(blockId, path).then(() => {
     renderEquationGlows();
+    updateEqualsBlockStates();
     if (checkWin()) showClear();
   });
 }
@@ -681,6 +1000,7 @@ async function undo() {
   const backwardPath = [...forwardFull].reverse().slice(1);
   await animateAlongPath(move.blockId, backwardPath);
   renderEquationGlows();
+  updateEqualsBlockStates();
 }
 
 function resetLevel() {
@@ -708,6 +1028,7 @@ async function openLevel(meta, skipOverlay) {
   renderBoard();
   renderHighlights();
   renderEquationGlows();
+  updateEqualsBlockStates();
 }
 
 function showClear() {
@@ -737,14 +1058,14 @@ function renderClearPreview() {
   container.style.width = `${size * state.width}px`;
   container.style.height = `${size * state.height}px`;
 
-  const wallEdgeCache = computeWallEdges();
   for (const block of Object.values(state.blocks)) {
-    const el = renderBlockEl(block, wallEdgeCache);
+    const el = renderBlockEl(block);
     el.classList.remove("selected");
     // cloneNodeするとクリックイベントリスナーは複製されないため、
     // 見本表示として安全に（操作できない状態で）使い回せる。
     container.appendChild(el.cloneNode(true));
   }
+  renderEdges(container);
 }
 
 function goToSelect() {
