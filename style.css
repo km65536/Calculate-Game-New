@@ -559,6 +559,13 @@ main { width: 100%; }
 .symbol-glyph.rotate {
   transform: rotate(90deg);
 }
+.symbol-glyph.glyph-img {
+  width: 60%;
+  height: 60%;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+}
 
 /* ---------- クリア演出 ---------- */
 .clear-overlay {

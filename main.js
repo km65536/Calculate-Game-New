@@ -15,7 +15,7 @@
 /* ---------------- 1. 状態管理 ---------------- */
 
 const state = {
-  levelsMeta: [],      // data/levels.json の中身
+  levelsMeta: [],      // 各ステージファイルを読んで作った一覧 [{id, name, file, def}, ...]（loadLevelsMeta参照）
   level: null,          // 現在のレベル定義（読み込み直後の生データ）
   width: 0,
   height: 0,
@@ -56,13 +56,24 @@ async function fetchJSON(path) {
   return res.json();
 }
 
+// levels.json は各ステージのファイルパスの一覧だけを持つ。
+// id・nameはステージ自身のファイル（data/levelN.json）に既に書いてあるので、
+// levels.json 側には重複して持たせない（片方だけ直して同期が崩れる事故を防ぐため）。
 async function loadLevelsMeta() {
   const data = await fetchJSON("data/levels.json");
-  state.levelsMeta = data.levels;
+  const files = data.levels;
+  state.levelsMeta = await Promise.all(
+    files.map(async (file) => {
+      const def = await fetchJSON(file);
+      // ついでにレベル本体もキャッシュしておき、実際に開く時の二重fetchを避ける
+      return { id: def.id, name: def.name, file, def };
+    })
+  );
 }
 
 async function loadLevel(meta) {
-  const def = await fetchJSON(meta.file);
+  // loadLevelsMetaの時点でキャッシュ済みならそれを使う（二重fetchを避ける）
+  const def = meta.def || (await fetchJSON(meta.file));
   const level = levelFromGridDef(def);
   state.level = level;
   state.width = level.width;
